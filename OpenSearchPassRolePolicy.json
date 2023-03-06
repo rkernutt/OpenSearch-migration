@@ -11,7 +11,7 @@
             "Resource": [
                 "arn:aws:es:us-east-1:123456789011:domain/ossvpcdomain",
                 "arn:aws:es:us-east-1:123456789011:domain/osspublicdomain",
-                "arn:aws:iam::123456789011:role/OpenSearchsnapshotrole:
+                "arn:aws:iam::123456789011:role/OpenSearchsnapshotrole"
             ]
         }
     ]
