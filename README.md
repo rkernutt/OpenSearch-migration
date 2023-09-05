@@ -4,6 +4,6 @@ OSS migration to Elastic helps to read the indexes stored on an OpenSearch clust
 
 There are several methods available:
 
-Remote Reindex - performing a remote reindex from within Kibana
+Remote_Reindex - performing a remote reindex from within Kibana
 
 Logstash - running a logstash pipeline with the opensearch input
