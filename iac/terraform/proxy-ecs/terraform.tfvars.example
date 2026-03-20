@@ -1,0 +1,16 @@
+aws_region             = "us-east-1"
+project                = "os-proxy"
+vpc_id                 = "vpc-xxxxxxxx"
+private_subnet_ids     = ["subnet-private-a", "subnet-private-b"]
+proxy_image            = "123456789012.dkr.ecr.us-east-1.amazonaws.com/os-proxy:latest"
+target_group_arn       = "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/os-proxy/xxxxxxxx"
+alb_security_group_id  = "sg-albxxxxxxxx"
+opensearch_endpoint    = "https://search-demo-xxxxx.us-east-1.es.amazonaws.com"
+proxy_user             = "reindex-user"
+proxy_password         = "change-me-or-use-secret-arn-below"
+# proxy_password_secret_arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:os-proxy-password-xxxxx"
+opensearch_domain_arns = [] # e.g. ["arn:aws:es:us-east-1:123456789012:domain/my-domain/*"]
+desired_count          = 2
+# enable_ecs_autoscaling = true
+# ecs_min_capacity       = 2
+# ecs_max_capacity       = 8

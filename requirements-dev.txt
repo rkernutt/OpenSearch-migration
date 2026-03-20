@@ -1,0 +1,3 @@
+# Optional: development, CI, and local verification
+-r requirements.txt
+pytest>=7.0.0

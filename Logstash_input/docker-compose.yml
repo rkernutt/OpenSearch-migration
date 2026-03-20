@@ -1,0 +1,36 @@
+# Load OpenSearch + Elastic settings from the repository root .env (copy from .env.example).
+#
+# Usage (from Logstash_input/):
+#   cp ../.env.example ../.env   # then edit
+#   docker compose up --build
+#
+# Elastic destination:
+#   Default service: ELASTIC_CLOUD_ID + ELASTIC_CLOUD_AUTH (format: elastic:password).
+#   API key: docker compose --profile apikey up --build
+#
+# See README.md for variable reference.
+
+services:
+  logstash:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - ../.env
+    environment:
+      LS_JAVA_OPTS: "-Xmx1g -Xms1g"
+    restart: "no"
+
+  logstash-apikey:
+    profiles:
+      - apikey
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - ../.env
+    environment:
+      LS_JAVA_OPTS: "-Xmx1g -Xms1g"
+    volumes:
+      - ./pipeline/logstash_api_key.conf:/usr/share/logstash/pipeline/logstash.conf:ro
+    restart: "no"

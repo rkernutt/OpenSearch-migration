@@ -1,0 +1,24 @@
+# Local env and secrets – do not commit
+.env
+.env.local
+.env.*.local
+*.local
+*.pem
+*.secret
+credentials.json
+secrets/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.Python
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+
+# Nested clone / accidental duplicate repo (do not commit)
+oss_migration/

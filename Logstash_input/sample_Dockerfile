@@ -1,3 +1,9 @@
+# Legacy one-off build. Prefer the repo-managed flow:
+#   Logstash_input/Dockerfile + docker-compose.yml + repo root .env
+#
+# Before building: copy sample_logstash.conf to logstash.conf in this directory:
+#   cp sample_logstash.conf logstash.conf
+# Then: docker build -t oss-migration-logstash -f sample_Dockerfile .
 FROM docker.elastic.co/logstash/logstash:8.10.3
 COPY logstash.conf /usr/share/logstash/pipeline/logstash.conf
 RUN ./bin/logstash-plugin install logstash-input-opensearch

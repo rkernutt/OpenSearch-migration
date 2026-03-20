@@ -1,0 +1,17 @@
+# Create the destination index with these settings BEFORE reindex for better performance.
+# After reindex completes, update refresh_interval and number_of_replicas as needed.
+# Run on the Elastic (destination) cluster.
+PUT destinationindexname
+{
+  "settings": {
+    "refresh_interval": "-1",
+    "number_of_replicas": 0
+  }
+}
+
+# After reindex is complete, restore desired settings (example):
+# POST destinationindexname/_settings
+# {
+#   "refresh_interval": "1s",
+#   "number_of_replicas": 1
+# }

@@ -1,12 +1,14 @@
-POST _reindex
+POST _reindex?scroll=10m&wait_for_completion=false
 {
     "source": {
         "remote": {
             "host": "https://Amazon_Opensearch_Service_Domain_Endpoint:443",
             "username": "username",
-            "password": "password"
+            "password": "password",
+            "socket_timeout": "60m"
         },
-        "index": "sourceindexname"
+        "index": "sourceindexname",
+        "size": 500
     },
     "dest": {
         "index": "destinationindexname"

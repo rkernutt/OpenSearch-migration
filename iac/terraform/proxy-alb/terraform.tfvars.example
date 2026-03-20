@@ -1,0 +1,8 @@
+# Copy to terraform.tfvars (do not commit secrets).
+aws_region          = "us-east-1"
+project             = "os-proxy"
+vpc_id              = "vpc-xxxxxxxx"
+public_subnet_ids   = ["subnet-aaaa", "subnet-bbbb"]
+certificate_arn     = "arn:aws:acm:us-east-1:123456789012:certificate/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+allowed_ingress_cidr = "0.0.0.0/0" # tighten for production
+proxy_port          = 9200

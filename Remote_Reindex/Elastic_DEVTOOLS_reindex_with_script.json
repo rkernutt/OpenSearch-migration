@@ -10,5 +10,9 @@ POST _reindex
     },
     "dest": {
         "index": "destinationindexname"
+    },
+    "script": {
+        "lang": "painless",
+        "source": "ctx._source.remove('legacyField'); if (ctx._source.containsKey('oldName')) { ctx._source.newName = ctx._source.remove('oldName'); }"
     }
 }
