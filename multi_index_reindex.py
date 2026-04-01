@@ -7,9 +7,9 @@ Does not call OpenSearch or Elastic; it only generates config.
 
 import argparse
 import json
+import os
 import sys
 from typing import List
-
 
 REINDEX_TEMPLATE = """POST _reindex
 {body}
@@ -35,6 +35,10 @@ def read_indices_file(path: str) -> List[str]:
 
 
 def main():
+    import bootstrap_env
+
+    bootstrap_env.load()
+
     parser = argparse.ArgumentParser(
         description="Generate reindex requests or index list for multi-index migration."
     )
@@ -53,32 +57,35 @@ def main():
     parser.add_argument(
         "--source-host",
         type=str,
-        default="https://Amazon_Opensearch_Service_Domain_Endpoint:443",
-        help="OpenSearch host for reindex source.remote.host.",
+        default=(
+            os.environ.get("SOURCE_OPENSEARCH_HOST")
+            or "https://Amazon_Opensearch_Service_Domain_Endpoint:443"
+        ),
+        help="OpenSearch host for reindex source.remote.host (env: SOURCE_OPENSEARCH_HOST).",
     )
     parser.add_argument(
         "--username",
         type=str,
-        default="username",
-        help="OpenSearch username for reindex.",
+        default=os.environ.get("SOURCE_OPENSEARCH_USER", "username"),
+        help="OpenSearch username for reindex (env: SOURCE_OPENSEARCH_USER).",
     )
     parser.add_argument(
         "--password",
         type=str,
-        default="password",
-        help="OpenSearch password for reindex.",
+        default=os.environ.get("SOURCE_OPENSEARCH_PASSWORD", "password"),
+        help="OpenSearch password for reindex (env: SOURCE_OPENSEARCH_PASSWORD).",
     )
     parser.add_argument(
         "--dest-prefix",
         type=str,
-        default="",
-        help="Optional prefix for destination index names (e.g. migrated-).",
+        default=os.environ.get("MIGRATION_DEST_PREFIX", ""),
+        help="Optional prefix for dest index names (env: MIGRATION_DEST_PREFIX).",
     )
     parser.add_argument(
         "--dest-suffix",
         type=str,
-        default="",
-        help="Optional suffix for destination index names (e.g. -v2).",
+        default=os.environ.get("MIGRATION_DEST_SUFFIX", ""),
+        help="Optional suffix for dest index names (env: MIGRATION_DEST_SUFFIX).",
     )
     parser.add_argument(
         "--output",
@@ -122,7 +129,10 @@ def main():
     indices = [x for x in indices if not (x in seen or seen.add(x))]
 
     if not indices:
-        print("Error: provide --indices and/or --indices-file with at least one index.", file=sys.stderr)
+        print(
+            "Error: provide --indices and/or --indices-file with at least one index.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     if args.format == "list":

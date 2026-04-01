@@ -13,6 +13,7 @@ All configuration is via environment variables (or a repo-root `.env` file if yo
 | `PROXY_LISTEN` | No | Listen address (default: `0.0.0.0:9200`). Use `localhost:9200` to accept only local connections. |
 | `PROXY_USER` | No | If set (with `PROXY_PASSWORD`), incoming requests must include `Authorization: Basic ...`. Use when the proxy is exposed publicly (e.g. behind an ALB for Elastic Cloud). |
 | `PROXY_PASSWORD` | No | Basic auth password for the proxy. |
+| `PROXY_MAX_BODY_MB` | No | Max request body size in MB (default: `100`). Larger bulk payloads may require raising this; very high values increase memory risk. |
 
 **IAM:** The proxy uses the same credentials as the rest of the repo (instance role, task role, or env). The role must allow calling the OpenSearch API (e.g. `es:ESHttpGet`, `es:ESHttpPost`, `es:ESHttpPut`, `es:ESHttpHead` on the domain resource).
 

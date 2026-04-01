@@ -2,6 +2,8 @@
 
 This guide assumes you are **new to this repository**. You want to move data from **OpenSearch** (on-premises or Amazon OpenSearch Service) to **Elasticsearch** (often Elastic Cloud) and verify the result.
 
+**Environmental factors:** Your clusters, network, security policies, and data are unique. You may see timeouts, auth errors, mapping rejections, or slow throughput until you tune paths and resources for **your** environment. Treat the first run as a **pilot**; use [preflight.py](../preflight.py) and [validate_migration.py](../validate_migration.py) before relying on a full migration. The main [README](../README.md) has a longer **Caveats and scope** section.
+
 ## What this project gives you
 
 - **Patterns and scripts**, not a single “Migrate” button: remote **reindex** from Elastic, **Logstash** streaming, optional **Kafka** design notes, a **SigV4 proxy** for private OpenSearch, and **validation** CLI.
@@ -60,6 +62,8 @@ pip install -r requirements.txt
 
 This installs `requests`, AWS signing libraries, and **`python-dotenv`** so the scripts automatically load **`.env`** from the repo root when you run them.
 
+Optional: run unit tests with **`make test`** (see [Makefile](../Makefile)) or `python -m pytest -q`. For CI-style exit codes and `make` targets, read [docs/AUTOMATION.md](AUTOMATION.md).
+
 ## Step 4: Choose how you will migrate
 
 Pick **one primary path** (you can use validation after any path):
@@ -72,7 +76,17 @@ Pick **one primary path** (you can use validation after any path):
 
 Remote reindex is configured in **Kibana Dev Tools** on **Elastic** (JSON bodies under `Remote_Reindex/`). Those requests use credentials you put **inside the Dev Tools JSON** (`source.remote` user/password), not necessarily your `.env`. Use **`.env`** for the **Python validation** step.
 
-## Step 5: Run the data move (brief pointers)
+## Step 5: Preflight (optional, recommended)
+
+Check connectivity and auth **before** a long reindex or Logstash run:
+
+```bash
+python preflight.py --strict-exit-codes --source-index YOUR_OPENSEARCH_INDEX --dest-index YOUR_ELASTIC_INDEX
+```
+
+Add `--check-counts` to require matching `_count`. See [docs/AUTOMATION.md](AUTOMATION.md) and `make preflight ARGS='...'` in the [Makefile](../Makefile).
+
+## Step 6: Run the data move (brief pointers)
 
 - **Remote reindex:** Allowlist OpenSearch on Elastic, then paste and run e.g. [Elastic_DEVTOOLS_reindex.json](../Remote_Reindex/Elastic_DEVTOOLS_reindex.json) (edit host and index names). For large indices, use the `_large` variant and [poll_reindex_task.py](../poll_reindex_task.py).
 - **Logstash:** Merge [examples/env/logstash-cloud-id.env.example](../examples/env/logstash-cloud-id.env.example) or [logstash-api-key.env.example](../examples/env/logstash-api-key.env.example) into `.env`, then:
@@ -83,7 +97,7 @@ Remote reindex is configured in **Kibana Dev Tools** on **Elastic** (JSON bodies
   # or: docker compose --profile apikey up --build
   ```
 
-## Step 6: Validate source vs destination
+## Step 7: Validate source vs destination
 
 Index names are passed on the **command line** (they are not required in `.env` for this script).
 
@@ -91,6 +105,7 @@ Single index:
 
 ```bash
 python validate_migration.py \
+  --strict-exit-codes \
   --source-index YOUR_OPENSEARCH_INDEX \
   --dest-index YOUR_ELASTIC_INDEX
 ```
@@ -99,12 +114,12 @@ The script reads `SOURCE_OPENSEARCH_HOST`, `DEST_ELASTIC_HOST`, auth, and `AWS_R
 
 Optional checks: `--sample-size 25` to verify random IDs exist on Elastic via `_mget`; batch mode `--indices` or `--indices-file`. See [README.md](../README.md) and [docs/TESTING.md](TESTING.md).
 
-## Step 7: Poll an async reindex task (if needed)
+## Step 8: Poll an async reindex task (if needed)
 
 If `POST _reindex` returned a task id:
 
 ```bash
-python poll_reindex_task.py --task-id "paste-task-id-here"
+python poll_reindex_task.py --strict-exit-codes --task-id "paste-task-id-here"
 ```
 
 Uses **`DEST_ELASTIC_*`** from `.env`.

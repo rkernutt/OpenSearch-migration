@@ -1,4 +1,5 @@
 """Offline checks: CLI scripts start and --help exits successfully."""
+
 from __future__ import annotations
 
 import subprocess
@@ -13,6 +14,7 @@ SCRIPTS = [
     "validate_migration.py",
     "multi_index_reindex.py",
     "poll_reindex_task.py",
+    "preflight.py",
 ]
 
 

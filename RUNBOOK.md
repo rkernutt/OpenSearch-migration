@@ -2,11 +2,15 @@
 
 Use this runbook for a single migration or a multi-index migration.
 
+**Environment:** Steps assume connectivity and credentials work in **your** context. If something fails, check network routes (including proxy/allowlist), IAM/fine-grained roles, cluster load, and mapping compatibility—issues are often environmental. Pilot on a non-production index and re-run [validate_migration.py](../validate_migration.py) after changes.
+
 **First time using this repo?** See [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) and [examples/env/](examples/env/) for `.env` templates.
 
 Before production cutover, run a **smoke test** and optional **`pytest`** checks—see [docs/TESTING.md](docs/TESTING.md).
 
 For a **copy-paste org template** (RACI, links, checklists), see [docs/RUNBOOK_TEMPLATE.md](docs/RUNBOOK_TEMPLATE.md).
+
+**CLI / CI / orchestration:** [Makefile](Makefile), [preflight.py](preflight.py), [docs/AUTOMATION.md](docs/AUTOMATION.md) (exit codes); [docs/ORCHESTRATION.md](docs/ORCHESTRATION.md) (Tines, AWS Step Functions, Jenkins).
 
 ## Prerequisites
 

@@ -1,4 +1,5 @@
 """Pure helpers for time/value bucket sampling (no HTTP)."""
+
 from validate_migration import (
     build_time_bucket_search_body,
     iter_time_bucket_ranges,
@@ -18,15 +19,14 @@ def test_iter_time_bucket_non_overlapping() -> None:
 
 
 def test_build_time_bucket_search_body() -> None:
-    b = build_time_bucket_search_body(
-        3, "@timestamp", {"gte": 1.0, "lt": 2.0}, 99
-    )
+    b = build_time_bucket_search_body(3, "@timestamp", {"gte": 1.0, "lt": 2.0}, 99)
     assert b["size"] == 3
     assert b["_source"] is False
     assert b["query"]["function_score"]["random_score"]["seed"] == 99
-    assert b["query"]["function_score"]["query"]["bool"]["filter"][0]["range"][
-        "@timestamp"
-    ] == {"gte": 1.0, "lt": 2.0}
+    assert b["query"]["function_score"]["query"]["bool"]["filter"][0]["range"]["@timestamp"] == {
+        "gte": 1.0,
+        "lt": 2.0,
+    }
 
 
 def test_iter_invalid_buckets() -> None:

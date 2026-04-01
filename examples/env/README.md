@@ -29,4 +29,4 @@ cp examples/env/validation.env.example .env
 - **Elastic API key:** Kibana / Deployment → **API keys** → create with `cluster` / `ingest` (and read) privileges as needed.
 - **Elastic Cloud ID & cloud_auth:** Deployment overview in Elastic Cloud console.
 
-See [docs/GETTING_STARTED.md](../../docs/GETTING_STARTED.md) for a full walkthrough.
+See [docs/GETTING_STARTED.md](../../docs/GETTING_STARTED.md) for a full walkthrough. After filling `.env`, you can run [preflight.py](../../preflight.py) (`python preflight.py --strict-exit-codes`) to verify reachability before a long migration.

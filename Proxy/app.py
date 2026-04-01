@@ -3,9 +3,10 @@ HTTP reverse proxy for Amazon OpenSearch Service (VPC endpoint).
 Accepts OpenSearch-style API requests, signs them with SigV4, and forwards to the VPC endpoint.
 Optional basic auth on the proxy for public exposure (e.g. Elastic Cloud reindex).
 """
-from pathlib import Path
+
 import os
 import sys
+from pathlib import Path
 
 _root = Path(__file__).resolve().parents[1]
 if str(_root) not in sys.path:
@@ -19,10 +20,14 @@ except ImportError:
 
 import boto3
 import requests
+from flask import Flask, Request, Response, request, stream_with_context
 from requests_aws4auth import AWS4Auth
-from flask import Flask, Request, request, Response, stream_with_context
 
 app = Flask(__name__)
+
+# Limit request body size (bulk requests); override via PROXY_MAX_BODY_MB (default 100).
+_max_body_mb = int(os.environ.get("PROXY_MAX_BODY_MB", "100"))
+app.config["MAX_CONTENT_LENGTH"] = max(1, _max_body_mb) * 1024 * 1024
 
 OPENSEARCH_ENDPOINT = os.environ.get("OPENSEARCH_ENDPOINT", "").rstrip("/")
 AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
@@ -114,10 +119,12 @@ def proxy(path: str):
     response_headers = _forward_headers_from_response(resp)
 
     if stream and resp.iter_content:
+
         def generate():
             for chunk in resp.iter_content(chunk_size=65536):
                 if chunk:
                     yield chunk
+
         return Response(
             stream_with_context(generate()),
             status=resp.status_code,

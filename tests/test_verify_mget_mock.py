@@ -1,4 +1,5 @@
 """Integration-style test with mocked HTTP for _mget parsing."""
+
 from unittest.mock import MagicMock, patch
 
 from validate_migration import DestAuth, verify_ids_mget_elastic

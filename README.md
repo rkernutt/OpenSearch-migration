@@ -2,11 +2,40 @@
 
 This project helps you read indexes from an OpenSearch cluster and migrate or reindex them to Elastic. Use it to periodically ingest data into Elastic, or to migrate once and retire OpenSearch.
 
+**Real-world caveat:** behavior and performance depend on **your environment**—cluster versions, networking (VPC, TLS, proxies, firewalls), IAM and throttling limits, index size and mapping quirks, and custom OpenSearch plugins. Expect to **test in non-production**, use [preflight.py](preflight.py) / [validate_migration.py](validate_migration.py), and adjust for your setup. See **Caveats and scope** below.
+
 **New here?** Start with **[docs/GETTING_STARTED.md](docs/GETTING_STARTED.md)** (clone → `.env` → migrate → validate). Example env templates: **[examples/env/](examples/env/)** (validation-only, Logstash with Cloud ID, Logstash with API key). Full variable reference: **[.env.example](.env.example)**.
 
 **Security:** Do not commit secrets. Use [.env.example](.env.example) and [.gitignore](.gitignore); see [SECURITY.md](SECURITY.md) for least-privilege IAM, credential hygiene, and CI scanning tips.
 
 **Testing:** See [docs/TESTING.md](docs/TESTING.md) for smoke tests and `pytest` (offline CLI checks).
+
+**CLI / CI / orchestration:** [Makefile](Makefile) (`make test`, `make lint`, `make preflight`, `make validate`), exit codes in [docs/AUTOMATION.md](docs/AUTOMATION.md), and platform notes (Tines, Step Functions, Jenkins) in [docs/ORCHESTRATION.md](docs/ORCHESTRATION.md). **Tines story blueprint:** [docs/TINES_STORY_TEMPLATE.md](docs/TINES_STORY_TEMPLATE.md). Version expectations: [docs/VERSION_MATRIX.md](docs/VERSION_MATRIX.md).
+
+**License:** [LICENSE](LICENSE) (Apache-2.0); attributions: [NOTICE](NOTICE). **Changelog:** [CHANGELOG.md](CHANGELOG.md).
+
+### Documentation map
+
+| Doc | Purpose |
+|-----|---------|
+| [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) | First-time setup, `.env`, validate |
+| [RUNBOOK.md](RUNBOOK.md) | Migration procedures, versioning, throughput |
+| [docs/AUTOMATION.md](docs/AUTOMATION.md) | Exit codes, `make`, `multi_index` env |
+| [docs/ORCHESTRATION.md](docs/ORCHESTRATION.md) | Tines, Step Functions, Jenkins |
+| [docs/TINES_STORY_TEMPLATE.md](docs/TINES_STORY_TEMPLATE.md) | Tines story blueprint |
+| [docs/SERVERLESS.md](docs/SERVERLESS.md) | Elastic / OpenSearch Serverless |
+| [docs/KAFKA_MIGRATION.md](docs/KAFKA_MIGRATION.md) | Kafka buffer pattern |
+| [docs/SEMANTIC_MIGRATION.md](docs/SEMANTIC_MIGRATION.md) | Vectors / `semantic_text` |
+| [docs/TESTING.md](docs/TESTING.md) | pytest, sampling, integration |
+| [docs/VERSION_MATRIX.md](docs/VERSION_MATRIX.md) | Version expectations |
+| [SECURITY.md](SECURITY.md) | Secrets, IAM, CI scanning |
+| [RECOMMENDATIONS.md](RECOMMENDATIONS.md) | What lives where in the repo |
+
+### Caveats and scope
+
+- **Three data paths, not interchangeable:** **Remote reindex** needs **Elastic Cloud Hosted** and network access from Elastic to OpenSearch; it does **not** apply to **Elastic Serverless** as a destination ([docs/SERVERLESS.md](docs/SERVERLESS.md)). **Logstash** (or similar) is the usual answer for streaming and Serverless. **Kafka** is documented as an **optional architecture** (buffer/replay)—this repo does **not** ship a full Kafka/Connect stack; you operate brokers and consumers in your environment ([docs/KAFKA_MIGRATION.md](docs/KAFKA_MIGRATION.md)).
+- **Orchestration examples, not exclusives:** [docs/ORCHESTRATION.md](docs/ORCHESTRATION.md) discusses **Tines**, **AWS Step Functions**, and **Jenkins** as common ways to wrap the same CLIs and APIs. Other schedulers, runbooks, or no orchestrator at all are fine. **GitHub Actions** in this repository is for **CI on the toolkit** (tests, lint, Terraform validate)—not a required way to run production migrations.
+- **Environmental factors (issues are normal until validated):** Problems often come from outside this repository: **network path** (timeouts if Elastic cannot reach OpenSearch or you rely on a proxy/ALB), **auth** (expired keys, wrong SigV4 region, FGAC too tight), **cluster limits** (threadpool rejections, max scroll/context, ingest pressure), **mapping and runtime field differences**, and **data shape** (oversized documents, nested limits). **Semantic / vector** and neural features add more surface area ([docs/SEMANTIC_MIGRATION.md](docs/SEMANTIC_MIGRATION.md)). Always run **preflight**, a **pilot index**, and **validation** in an environment that matches production; nothing here guarantees a zero-touch run for every customer topology.
 
 ## Migration paths into Elastic Cloud
 

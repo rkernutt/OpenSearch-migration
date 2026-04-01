@@ -16,6 +16,10 @@ This page records **where each area was implemented**. Policy choices (approval 
 |--------|----------------|
 | Security & secrets | [SECURITY.md](SECURITY.md), [.env.example](.env.example), [examples/env/](examples/env/), [.gitignore](.gitignore), [bootstrap_env.py](bootstrap_env.py) |
 | First-time users | [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) |
+| CLI / exit codes / Makefile | [docs/AUTOMATION.md](docs/AUTOMATION.md), [Makefile](Makefile) |
+| Orchestration (Tines, Step Functions, Jenkins) | [docs/ORCHESTRATION.md](docs/ORCHESTRATION.md), [docs/TINES_STORY_TEMPLATE.md](docs/TINES_STORY_TEMPLATE.md) |
+| Version guidance | [docs/VERSION_MATRIX.md](docs/VERSION_MATRIX.md) |
+| Preflight script | [preflight.py](preflight.py) |
 | Org production IaC checklist | [docs/ORG_PRODUCTION_IAC.md](docs/ORG_PRODUCTION_IAC.md), [iac/](iac/) (WAF, scoped IAM, Secrets Manager inject, ECS autoscaling) |
 | TLS & credential lifecycle | [docs/TLS_AND_CREDENTIAL_LIFECYCLE.md](docs/TLS_AND_CREDENTIAL_LIFECYCLE.md) |
 | Validation (batch, sampling, existence) | [validate_migration.py](validate_migration.py), [README.md](README.md), [RUNBOOK.md](RUNBOOK.md) |

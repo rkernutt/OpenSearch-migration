@@ -8,6 +8,8 @@ This document describes how to handle secrets and **least-privilege** access for
 - **`.env.example` is safe to commit:** it contains placeholders only. The same applies to [examples/env/*.env.example](examples/env/) templates. Never paste production values into tracked files; copy them to repo-root `.env` locally only.
 - **Install optional dotenv support:** `pip install -r requirements.txt` includes `python-dotenv`. These tools load repo-root `.env` via [bootstrap_env.py](bootstrap_env.py) when present:
   - [validate_migration.py](validate_migration.py)
+  - [preflight.py](preflight.py)
+  - [multi_index_reindex.py](multi_index_reindex.py)
   - [poll_reindex_task.py](poll_reindex_task.py)
   - [Proxy/app.py](Proxy/app.py) (when run from the repo)
 - **CI/CD:** Inject secrets from your secret manager (AWS Secrets Manager, GitHub Actions secrets, etc.) as environment variables—never echo them in logs or store them in job artifacts.
@@ -19,8 +21,9 @@ This document describes how to handle secrets and **least-privilege** access for
 
 | Variable(s) | Used by |
 |-------------|---------|
-| `SOURCE_*`, `DEST_*`, `AWS_*` | `validate_migration.py` |
-| `DEST_ELASTIC_*` | `poll_reindex_task.py` |
+| `SOURCE_*`, `DEST_*`, `AWS_*` | `validate_migration.py`, `preflight.py` |
+| `DEST_ELASTIC_*` | `poll_reindex_task.py`, `preflight.py` |
+| `MIGRATION_DEST_*` | `multi_index_reindex.py` (optional defaults) |
 | `OPENSEARCH_ENDPOINT`, `PROXY_USER`, `PROXY_PASSWORD`, `AWS_*` | [Proxy/app.py](Proxy/app.py) |
 
 ---

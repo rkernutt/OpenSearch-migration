@@ -47,11 +47,23 @@ def main():
     parser = argparse.ArgumentParser(
         description="Poll GET _tasks/<task_id> until the reindex (or other) task finishes."
     )
-    parser.add_argument("--task-id", required=True, help="Task id from the reindex API response (without task: prefix).")
-    parser.add_argument("--dest-host", default=os.environ.get("DEST_ELASTIC_HOST"), help="Elastic base URL")
-    parser.add_argument("--dest-api-key", default=os.environ.get("DEST_ELASTIC_API_KEY"), help="Elastic API key")
-    parser.add_argument("--dest-user", default=os.environ.get("DEST_ELASTIC_USER"), help="Elastic user")
-    parser.add_argument("--dest-password", default=os.environ.get("DEST_ELASTIC_PASSWORD"), help="Elastic password")
+    parser.add_argument(
+        "--task-id",
+        required=True,
+        help="Task id from the reindex API response (without task: prefix).",
+    )
+    parser.add_argument(
+        "--dest-host", default=os.environ.get("DEST_ELASTIC_HOST"), help="Elastic base URL"
+    )
+    parser.add_argument(
+        "--dest-api-key", default=os.environ.get("DEST_ELASTIC_API_KEY"), help="Elastic API key"
+    )
+    parser.add_argument(
+        "--dest-user", default=os.environ.get("DEST_ELASTIC_USER"), help="Elastic user"
+    )
+    parser.add_argument(
+        "--dest-password", default=os.environ.get("DEST_ELASTIC_PASSWORD"), help="Elastic password"
+    )
     parser.add_argument(
         "--interval",
         type=float,
@@ -68,6 +80,11 @@ def main():
         "--verbose",
         action="store_true",
         help="Print raw JSON each poll.",
+    )
+    parser.add_argument(
+        "--strict-exit-codes",
+        action="store_true",
+        help="0=success, 1=task/reindex failure, 2=timeout or argparse, 3=HTTP/network error on poll.",
     )
     args = parser.parse_args()
 
@@ -92,7 +109,7 @@ def main():
             print(f"Request failed: {e}", file=sys.stderr)
             if hasattr(e, "response") and e.response is not None:
                 print(e.response.text[:1000], file=sys.stderr)
-            sys.exit(1)
+            sys.exit(3 if args.strict_exit_codes else 1)
 
         if args.verbose:
             print(json.dumps(last_json, indent=2))
@@ -106,11 +123,16 @@ def main():
                 print(f"Task finished with error: {json.dumps(error, indent=2)}", file=sys.stderr)
                 sys.exit(1)
             if fail:
-                print(f"Task finished with failures ({len(fail)}): {json.dumps(fail[:10], indent=2)}", file=sys.stderr)
+                print(
+                    f"Task finished with failures ({len(fail)}): {json.dumps(fail[:10], indent=2)}",
+                    file=sys.stderr,
+                )
                 sys.exit(1)
             print("Task completed successfully.")
             if isinstance(response, dict) and "total" in response:
-                print(f"Total: {response.get('total')} created: {response.get('created')} updated: {response.get('updated')} deleted: {response.get('deleted')}")
+                print(
+                    f"Total: {response.get('total')} created: {response.get('created')} updated: {response.get('updated')} deleted: {response.get('deleted')}"
+                )
             sys.exit(0)
 
         status = last_json.get("status", {})
@@ -124,7 +146,10 @@ def main():
 
         time.sleep(args.interval)
 
-    print(f"Timed out after {args.timeout}s; last state: {json.dumps(last_json, indent=2) if last_json else 'n/a'}", file=sys.stderr)
+    print(
+        f"Timed out after {args.timeout}s; last state: {json.dumps(last_json, indent=2) if last_json else 'n/a'}",
+        file=sys.stderr,
+    )
     sys.exit(2)
 
 

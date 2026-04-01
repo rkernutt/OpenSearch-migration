@@ -155,7 +155,9 @@ def build_time_bucket_search_body(
     }
 
 
-def _fetch_stats_min_max(url_search: str, auth: Any, field: str) -> Tuple[Optional[float], Optional[float]]:
+def _fetch_stats_min_max(
+    url_search: str, auth: Any, field: str
+) -> Tuple[Optional[float], Optional[float]]:
     """min/max from stats aggregation (date and numeric fields)."""
     body = {"size": 0, "aggs": {"_bounds": {"stats": {"field": field}}}}
     r = requests.post(url_search, auth=auth, json=body, timeout=60)
@@ -186,7 +188,10 @@ def _sample_doc_ids_time_stratified(
     """
     mn, mx = _fetch_stats_min_max(url, auth, field)
     if mn is None or mx is None:
-        return [], "time_field stats returned no min/max (field missing, wrong type, or empty index?)"
+        return (
+            [],
+            "time_field stats returned no min/max (field missing, wrong type, or empty index?)",
+        )
     k = max(1, min(time_buckets, n))
     ranges = iter_time_bucket_ranges(mn, mx, k)
     sizes = distribute_sample_sizes(n, k)
@@ -204,7 +209,7 @@ def _sample_doc_ids_time_stratified(
     return list(dict.fromkeys(out)), f"time_field={field}, buckets={k}"
 
 
-def _opensearch_auth_sigv4(region: str) -> AWS4Auth:
+def opensearch_auth_sigv4(region: str) -> AWS4Auth:
     if not boto3:
         raise RuntimeError("boto3 is required for SigV4; pip install boto3")
     credentials = boto3.Session().get_credentials()
@@ -220,7 +225,7 @@ def _opensearch_auth_sigv4(region: str) -> AWS4Auth:
 
 
 def head_index_opensearch_sigv4(host: str, index: str, region: str) -> bool:
-    auth = _opensearch_auth_sigv4(region)
+    auth = opensearch_auth_sigv4(region)
     url = host.rstrip("/") + "/" + index
     r = requests.head(url, auth=auth, timeout=30)
     if r.status_code == 404:
@@ -249,7 +254,7 @@ def head_index_elastic(host: str, index: str, dest: DestAuth) -> bool:
 
 
 def get_count_opensearch_sigv4(host: str, index: str, region: str) -> int:
-    auth = _opensearch_auth_sigv4(region)
+    auth = opensearch_auth_sigv4(region)
     url = host.rstrip("/") + "/" + index + "/_count"
     r = requests.get(url, auth=auth, timeout=30)
     r.raise_for_status()
@@ -308,14 +313,16 @@ def sample_doc_ids_opensearch_sigv4(
     time_buckets: int = 8,
     time_meta: Optional[List[str]] = None,
 ) -> List[str]:
-    auth = _opensearch_auth_sigv4(region)
+    auth = opensearch_auth_sigv4(region)
     url = host.rstrip("/") + "/" + index + "/_search"
     if sample_mode == "stratified":
         return _sample_doc_ids_stratified(url, auth, size, random_seed, sample_slices)
     if sample_mode == "time_stratified":
         if not time_field:
             raise ValueError("time_stratified requires time_field")
-        ids, note = _sample_doc_ids_time_stratified(url, auth, size, time_field, time_buckets, random_seed)
+        ids, note = _sample_doc_ids_time_stratified(
+            url, auth, size, time_field, time_buckets, random_seed
+        )
         if time_meta is not None:
             time_meta.append(note)
         return ids
@@ -360,7 +367,9 @@ def sample_doc_ids_opensearch_basic(
     return [h["_id"] for h in hits if "_id" in h]
 
 
-def verify_ids_mget_elastic(host: str, index: str, dest: DestAuth, ids: List[str]) -> Tuple[int, List[str]]:
+def verify_ids_mget_elastic(
+    host: str, index: str, dest: DestAuth, ids: List[str]
+) -> Tuple[int, List[str]]:
     """
     Return (found_count, missing_ids) using _mget.
     """
@@ -416,24 +425,35 @@ def validate_pair(
     sample_slices: Optional[int] = None,
     time_field: Optional[str] = None,
     time_buckets: int = 8,
-) -> Tuple[bool, str]:
+) -> Tuple[bool, str, str]:
     """
-    Return (ok, detail_message).
+    Return (ok, detail_message, category) where category is \"ok\", \"validation\", or \"transport\".
     """
     try:
+        if not use_sigv4:
+            if source_user is None or source_password is None:
+                return (
+                    False,
+                    "OpenSearch user and password are required when not using SigV4",
+                    "validation",
+                )
         if check_existence:
             if use_sigv4:
                 if not head_index_opensearch_sigv4(source_host, source_index, source_region):
-                    return False, f"Source index does not exist: {source_index}"
+                    return False, f"Source index does not exist: {source_index}", "validation"
             else:
-                if not head_index_opensearch_basic(source_host, source_index, source_user, source_password):
-                    return False, f"Source index does not exist: {source_index}"
+                assert source_user is not None and source_password is not None
+                if not head_index_opensearch_basic(
+                    source_host, source_index, source_user, source_password
+                ):
+                    return False, f"Source index does not exist: {source_index}", "validation"
             if not head_index_elastic(dest_host, dest_index, dest_auth):
-                return False, f"Destination index does not exist: {dest_index}"
+                return False, f"Destination index does not exist: {dest_index}", "validation"
 
         if use_sigv4:
             source_count = get_count_opensearch_sigv4(source_host, source_index, source_region)
         else:
+            assert source_user is not None and source_password is not None
             source_count = get_count_opensearch_basic(
                 source_host, source_index, source_user, source_password
             )
@@ -443,6 +463,7 @@ def validate_pair(
             return (
                 False,
                 f"count mismatch: source={source_count} dest={dest_count}",
+                "validation",
             )
 
         detail = f"counts match ({source_count})"
@@ -464,6 +485,7 @@ def validate_pair(
                     time_meta=time_meta if sample_mode == "time_stratified" else None,
                 )
             else:
+                assert source_user is not None and source_password is not None
                 ids = sample_doc_ids_opensearch_basic(
                     source_host,
                     source_index,
@@ -478,7 +500,7 @@ def validate_pair(
                     time_meta=time_meta if sample_mode == "time_stratified" else None,
                 )
             if sample_mode == "time_stratified" and not ids and time_meta:
-                return False, f"{detail}; {time_meta[0]}"
+                return False, f"{detail}; {time_meta[0]}", "validation"
             if len(ids) < n:
                 detail += f"; sampled {len(ids)} ids (requested {n})"
             found, missing = verify_ids_mget_elastic(dest_host, dest_index, dest_auth, ids)
@@ -486,6 +508,7 @@ def validate_pair(
                 return (
                     False,
                     f"{detail}; ID sample failed: {len(missing)} missing on dest (e.g. {missing[:5]})",
+                    "validation",
                 )
             strat = ""
             if sample_mode == "stratified":
@@ -495,14 +518,14 @@ def validate_pair(
                 strat = f", {time_meta[0]}"
             detail += f"; ID sample OK ({found} docs, mode={sample_mode}{strat})"
 
-        return True, detail
+        return True, detail, "ok"
     except ValueError as e:
-        return False, str(e)
+        return False, str(e), "validation"
     except requests.RequestException as e:
         msg = str(e)
         if hasattr(e, "response") and e.response is not None:
             msg += f" — {e.response.text[:500]}"
-        return False, msg
+        return False, msg, "transport"
 
 
 def main():
@@ -533,14 +556,38 @@ def main():
         default="",
         help="Appended to each source index name for destination (batch).",
     )
-    parser.add_argument("--source-host", default=os.environ.get("SOURCE_OPENSEARCH_HOST"), help="OpenSearch base URL")
-    parser.add_argument("--dest-host", default=os.environ.get("DEST_ELASTIC_HOST"), help="Elastic base URL")
-    parser.add_argument("--source-region", default=os.environ.get("AWS_REGION", "us-east-1"), help="AWS region for SigV4 (source)")
-    parser.add_argument("--source-user", default=os.environ.get("SOURCE_OPENSEARCH_USER"), help="OpenSearch user (basic auth)")
-    parser.add_argument("--source-password", default=os.environ.get("SOURCE_OPENSEARCH_PASSWORD"), help="OpenSearch password")
-    parser.add_argument("--dest-api-key", default=os.environ.get("DEST_ELASTIC_API_KEY"), help="Elastic API key")
-    parser.add_argument("--dest-user", default=os.environ.get("DEST_ELASTIC_USER"), help="Elastic user")
-    parser.add_argument("--dest-password", default=os.environ.get("DEST_ELASTIC_PASSWORD"), help="Elastic password")
+    parser.add_argument(
+        "--source-host",
+        default=os.environ.get("SOURCE_OPENSEARCH_HOST"),
+        help="OpenSearch base URL",
+    )
+    parser.add_argument(
+        "--dest-host", default=os.environ.get("DEST_ELASTIC_HOST"), help="Elastic base URL"
+    )
+    parser.add_argument(
+        "--source-region",
+        default=os.environ.get("AWS_REGION", "us-east-1"),
+        help="AWS region for SigV4 (source)",
+    )
+    parser.add_argument(
+        "--source-user",
+        default=os.environ.get("SOURCE_OPENSEARCH_USER"),
+        help="OpenSearch user (basic auth)",
+    )
+    parser.add_argument(
+        "--source-password",
+        default=os.environ.get("SOURCE_OPENSEARCH_PASSWORD"),
+        help="OpenSearch password",
+    )
+    parser.add_argument(
+        "--dest-api-key", default=os.environ.get("DEST_ELASTIC_API_KEY"), help="Elastic API key"
+    )
+    parser.add_argument(
+        "--dest-user", default=os.environ.get("DEST_ELASTIC_USER"), help="Elastic user"
+    )
+    parser.add_argument(
+        "--dest-password", default=os.environ.get("DEST_ELASTIC_PASSWORD"), help="Elastic password"
+    )
     parser.add_argument(
         "--check-existence",
         action="store_true",
@@ -591,6 +638,15 @@ def main():
         default="text",
         help="text: human lines; json: one JSON object on stdout; csv: header + rows (good for CI artifacts).",
     )
+    parser.add_argument(
+        "--strict-exit-codes",
+        action="store_true",
+        help=(
+            "Distinct exit codes for automation: 0=ok, 1=data/validation failure, "
+            "2=misconfiguration, 3=network/HTTP failure. Default: any failure exits 1 "
+            "(argparse errors still exit 2)."
+        ),
+    )
     args = parser.parse_args()
 
     batch_indices: List[str] = []
@@ -609,15 +665,20 @@ def main():
         )
 
     if not args.source_host or not args.dest_host:
-        parser.error("--source-host and --dest-host (or SOURCE_OPENSEARCH_HOST and DEST_ELASTIC_HOST) are required")
+        parser.error(
+            "--source-host and --dest-host (or SOURCE_OPENSEARCH_HOST and DEST_ELASTIC_HOST) are required"
+        )
 
     use_sigv4 = not (args.source_user and args.source_password)
     if use_sigv4 and not boto3:
         print("Error: For SigV4 source auth, boto3 is required.", file=sys.stderr)
-        sys.exit(1)
+        sys.exit(2 if args.strict_exit_codes else 1)
     if not args.dest_api_key and not (args.dest_user and args.dest_password):
-        print("Error: Set --dest-api-key or (--dest-user and --dest-password) for Elastic.", file=sys.stderr)
-        sys.exit(1)
+        print(
+            "Error: Set --dest-api-key or (--dest-user and --dest-password) for Elastic.",
+            file=sys.stderr,
+        )
+        sys.exit(2 if args.strict_exit_codes else 1)
     if args.sample_mode == "time_stratified" and not args.time_field:
         parser.error("--sample-mode time_stratified requires --time-field")
 
@@ -632,15 +693,14 @@ def main():
     else:
         if not batch_indices:
             print("Error: no indices in batch.", file=sys.stderr)
-            sys.exit(1)
-        pairs = [
-            (src, args.dest_prefix + src + args.dest_suffix) for src in batch_indices
-        ]
+            sys.exit(2 if args.strict_exit_codes else 1)
+        pairs = [(src, args.dest_prefix + src + args.dest_suffix) for src in batch_indices]
 
     results: List[dict] = []
     failures = 0
+    transport_failures = 0
     for src_idx, dst_idx in pairs:
-        ok, detail = validate_pair(
+        ok, detail, category = validate_pair(
             args.source_host,
             args.dest_host,
             src_idx,
@@ -665,30 +725,45 @@ def main():
                 "ok": ok,
                 "status": "PASS" if ok else "FAIL",
                 "detail": detail,
+                "category": category,
             }
         )
         if not ok:
             failures += 1
+            if category == "transport":
+                transport_failures += 1
+
+    def _exit_failure() -> None:
+        if args.strict_exit_codes and transport_failures:
+            sys.exit(3)
+        if failures:
+            sys.exit(1)
 
     if args.output_format == "text":
         for row in results:
-            print(f"[{row['status']}] {row['source_index']} -> {row['dest_index']}: {row['detail']}")
+            print(
+                f"[{row['status']}] {row['source_index']} -> {row['dest_index']}: {row['detail']}"
+            )
         if failures:
             print(f"\n{len(pairs)} pair(s) checked; {failures} failed.", file=sys.stderr)
-            sys.exit(1)
+            _exit_failure()
         print("All checks passed.")
     elif args.output_format == "json":
         out = {
-            "summary": {"checked": len(pairs), "failed": failures},
+            "summary": {
+                "checked": len(pairs),
+                "failed": failures,
+                "transport_failed": transport_failures,
+            },
             "results": results,
         }
         print(json.dumps(out, indent=2))
         if failures:
-            sys.exit(1)
+            _exit_failure()
     else:
         buf = io.StringIO()
         w = csv.writer(buf)
-        w.writerow(["source_index", "dest_index", "status", "ok", "detail"])
+        w.writerow(["source_index", "dest_index", "status", "ok", "category", "detail"])
         for row in results:
             w.writerow(
                 [
@@ -696,12 +771,13 @@ def main():
                     row["dest_index"],
                     row["status"],
                     row["ok"],
+                    row["category"],
                     row["detail"],
                 ]
             )
         print(buf.getvalue().rstrip("\n"))
         if failures:
-            sys.exit(1)
+            _exit_failure()
 
 
 if __name__ == "__main__":

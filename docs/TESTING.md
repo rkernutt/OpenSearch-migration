@@ -4,7 +4,7 @@ Use these steps to verify connectivity, credentials, and tooling **before** migr
 
 ## Prerequisites
 
-- Python **3.9+** recommended (`from __future__ import annotations` and typing used in some scripts).
+- **Python version:** the tooling targets **3.9 or newer** (see [requirements.txt](../requirements.txt) and [pyproject.toml](../pyproject.toml) `target-version` / `python_version`). It is **not** pinned to a single minor—use any supported CPython from 3.9 up; [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs **3.9** and **3.11** on each push/PR.
 - From the repo root: `pip install -r requirements.txt`
 - For automated checks in CI: `pip install -r requirements-dev.txt && pytest`
 
@@ -17,6 +17,12 @@ python3 -m pytest -q
 ```
 
 See [tests/test_cli_help.py](../tests/test_cli_help.py).
+
+From the repo root, `make test` runs the same checks ([Makefile](../Makefile)).
+
+After `pip install -r requirements-dev.txt`, **`make lint`** runs Ruff (check + format check) and Mypy on the main scripts—use before opening a PR to match CI.
+
+**Automation / exit codes:** `validate_migration.py` and `poll_reindex_task.py` support `--strict-exit-codes` (see [AUTOMATION.md](AUTOMATION.md)). [preflight.py](../preflight.py) is for pre-migration reachability checks.
 
 **Offline unit tests (no cluster):**
 
