@@ -5,7 +5,7 @@ This document describes how to handle secrets and **least-privilege** access for
 ## Secrets and configuration
 
 - **Do not commit** real endpoints, passwords, API keys, or ARNs. Use a local `.env` file (see [.env.example](.env.example)). `.env` is listed in [.gitignore](.gitignore). Also ignore patterns cover `*.secret`, `credentials.json`, and `secrets/`.
-- **`.env.example` is safe to commit:** it contains placeholders only. Never paste production values into tracked files.
+- **`.env.example` is safe to commit:** it contains placeholders only. The same applies to [examples/env/*.env.example](examples/env/) templates. Never paste production values into tracked files; copy them to repo-root `.env` locally only.
 - **Install optional dotenv support:** `pip install -r requirements.txt` includes `python-dotenv`. These tools load repo-root `.env` via [bootstrap_env.py](bootstrap_env.py) when present:
   - [validate_migration.py](validate_migration.py)
   - [poll_reindex_task.py](poll_reindex_task.py)

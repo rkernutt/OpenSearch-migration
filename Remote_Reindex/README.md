@@ -32,6 +32,8 @@ For secrets and IAM when validating migrations, see [../SECURITY.md](../SECURITY
 
 ## 4. Mappings and version conflicts
 
+For **Lucene/index-format** vs **document versioning** vs **source field** cleanup, see the **“Version and compatibility”** section in [RUNBOOK.md](../RUNBOOK.md).
+
 OpenSearch and Elasticsearch mappings are usually compatible, but dynamic templates, analyzers, or field types can differ.
 
 - **Strict control:** On the **Elastic** cluster, `PUT` the destination index first with the mappings and settings you want, then run `_reindex` (the source data is applied to that mapping).

@@ -2,16 +2,31 @@
 
 This project helps you read indexes from an OpenSearch cluster and migrate or reindex them to Elastic. Use it to periodically ingest data into Elastic, or to migrate once and retire OpenSearch.
 
+**New here?** Start with **[docs/GETTING_STARTED.md](docs/GETTING_STARTED.md)** (clone → `.env` → migrate → validate). Example env templates: **[examples/env/](examples/env/)** (validation-only, Logstash with Cloud ID, Logstash with API key). Full variable reference: **[.env.example](.env.example)**.
+
 **Security:** Do not commit secrets. Use [.env.example](.env.example) and [.gitignore](.gitignore); see [SECURITY.md](SECURITY.md) for least-privilege IAM, credential hygiene, and CI scanning tips.
 
 **Testing:** See [docs/TESTING.md](docs/TESTING.md) for smoke tests and `pytest` (offline CLI checks).
 
 ## Migration paths into Elastic Cloud
 
-Two methods move data **from Amazon OpenSearch Service (or any OpenSearch cluster) into Elastic Cloud**:
+Primary ways to move data **from Amazon OpenSearch Service (or any OpenSearch cluster) into Elastic**:
 
-- **Remote reindex** – Run `POST _reindex` from Kibana/Dev Tools on your **Elastic** deployment, with `source.remote` pointing at the OpenSearch domain. See [Remote_Reindex](Remote_Reindex/).
-- **Logstash** – Run a Logstash pipeline with the OpenSearch input plugin reading from OpenSearch and the Elasticsearch output writing to Elastic Cloud. See [Logstash_input](Logstash_input/).
+- **Remote reindex** – Run `POST _reindex` from Kibana/Dev Tools on your **Elastic** deployment, with `source.remote` pointing at the OpenSearch domain. See [Remote_Reindex](Remote_Reindex/). (**Elastic Cloud Hosted**; not Serverless—see [docs/SERVERLESS.md](docs/SERVERLESS.md).)
+- **Logstash** – OpenSearch input → Elasticsearch output. See [Logstash_input](Logstash_input/).
+- **Kafka (optional)** – Buffer and replay between extract and load; see [docs/KAFKA_MIGRATION.md](docs/KAFKA_MIGRATION.md).
+
+### Choosing a path (remote reindex vs Logstash vs Kafka)
+
+| Topic | **Remote reindex** | **Logstash** | **Kafka** (optional buffer) |
+|-------|-------------------|--------------|-----------------------------|
+| **Best for** | Large batch moves when Elastic **Hosted** can reach OpenSearch | Streaming, **Serverless** destinations, jump-host–friendly extract, custom filters | Teams already on Kafka; **durable replay**, spike buffering, **multiple consumers** |
+| **Runs where** | On the **Elasticsearch** cluster (Kibana Dev Tools) | Your host / container (pull OpenSearch, push Elastic) | Brokers + **producer** (extract) and **consumer** (load), often with Logstash or custom workers |
+| **Ops footprint** | Low on your side (no pipeline to deploy) | Single service / Compose stack | Higher (cluster, topics, consumer groups, monitoring) |
+| **Replay / backpressure** | Rerun `_reindex` or task-based resume | DLQ, bounded queries, tuning | Topic retention + offsets; **per-key** ordering if you key by `_id` |
+| **Product caveat** | **Not** on Elastic **Serverless** as destination | Works toward Hosted and Serverless | Design-only in this repo; see [docs/KAFKA_MIGRATION.md](docs/KAFKA_MIGRATION.md) |
+
+**Operations guide:** [RUNBOOK.md](RUNBOOK.md) (versioning, ordering, retries, throughput checklist). **Packaging:** [docs/PACKAGING.md](docs/PACKAGING.md). **Semantic / vectors:** [docs/SEMANTIC_MIGRATION.md](docs/SEMANTIC_MIGRATION.md), [examples/semantic_text/](examples/semantic_text/).
 
 ## Remote reindex (to Elastic Cloud)
 

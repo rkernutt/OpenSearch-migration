@@ -14,7 +14,8 @@ This page records **where each area was implemented**. Policy choices (approval 
 
 | Theme | Where it lives |
 |--------|----------------|
-| Security & secrets | [SECURITY.md](SECURITY.md), [.env.example](.env.example), [.gitignore](.gitignore), [bootstrap_env.py](bootstrap_env.py) |
+| Security & secrets | [SECURITY.md](SECURITY.md), [.env.example](.env.example), [examples/env/](examples/env/), [.gitignore](.gitignore), [bootstrap_env.py](bootstrap_env.py) |
+| First-time users | [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) |
 | Org production IaC checklist | [docs/ORG_PRODUCTION_IAC.md](docs/ORG_PRODUCTION_IAC.md), [iac/](iac/) (WAF, scoped IAM, Secrets Manager inject, ECS autoscaling) |
 | TLS & credential lifecycle | [docs/TLS_AND_CREDENTIAL_LIFECYCLE.md](docs/TLS_AND_CREDENTIAL_LIFECYCLE.md) |
 | Validation (batch, sampling, existence) | [validate_migration.py](validate_migration.py), [README.md](README.md), [RUNBOOK.md](RUNBOOK.md) |
@@ -27,6 +28,11 @@ This page records **where each area was implemented**. Policy choices (approval 
 | Testing & CI | [docs/TESTING.md](docs/TESTING.md), [pytest.ini](pytest.ini), [.github/workflows/ci.yml](.github/workflows/ci.yml), [.github/workflows/ci-security-strict.yml](.github/workflows/ci-security-strict.yml), [tests/](tests/) |
 | Reindex with `script` example | [Remote_Reindex/Elastic_DEVTOOLS_reindex_with_script.json](Remote_Reindex/Elastic_DEVTOOLS_reindex_with_script.json) |
 | Org runbook template | [docs/RUNBOOK_TEMPLATE.md](docs/RUNBOOK_TEMPLATE.md) |
+| Runbook: version, FIFO, retries, throughput | [RUNBOOK.md](RUNBOOK.md) |
+| Kafka buffer architecture | [docs/KAFKA_MIGRATION.md](docs/KAFKA_MIGRATION.md) |
+| Docker vs local Logstash | [docs/PACKAGING.md](docs/PACKAGING.md) |
+| Checkpointed ETL evaluation | [docs/CHECKPOINT_ETL.md](docs/CHECKPOINT_ETL.md) |
+| Semantic / vector migration | [docs/SEMANTIC_MIGRATION.md](docs/SEMANTIC_MIGRATION.md), [examples/semantic_text/](examples/semantic_text/) |
 
 ---
 

@@ -2,18 +2,74 @@
 
 Use this runbook for a single migration or a multi-index migration.
 
+**First time using this repo?** See [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) and [examples/env/](examples/env/) for `.env` templates.
+
 Before production cutover, run a **smoke test** and optional **`pytest`** checks—see [docs/TESTING.md](docs/TESTING.md).
 
 For a **copy-paste org template** (RACI, links, checklists), see [docs/RUNBOOK_TEMPLATE.md](docs/RUNBOOK_TEMPLATE.md).
 
 ## Prerequisites
 
-- **Elastic Cloud Hosted** deployment (remote reindex is not supported on Serverless).
+- **Elastic Cloud Hosted** deployment if using **remote reindex** (remote reindex is not supported on Elastic **Serverless**—use Logstash, Kafka-buffered ETL, or custom bulk; see [docs/SERVERLESS.md](docs/SERVERLESS.md)).
 - OpenSearch domain reachable from Elastic Cloud (public endpoint or proxy). If the domain is VPC-only, use a public endpoint or the [Proxy](Proxy/README.md) in AWS that signs requests with SigV4.
 - Credentials:
   - **Remote reindex:** OpenSearch username/password (fine-grained access), or ensure the domain accepts requests from Elastic’s IPs with appropriate auth.
   - **Logstash:** OpenSearch user/password, or IAM + proxy (see [Logstash_input/README.md](Logstash_input/README.md)).
+  - **Kafka path (optional):** see [docs/KAFKA_MIGRATION.md](docs/KAFKA_MIGRATION.md).
   - **Elastic:** API key or username/password for the Elastic deployment.
+
+## Version and compatibility (before you migrate)
+
+Three different “version” problems are often confused:
+
+1. **On-disk / Lucene segment format**  
+   Errors about index creation version or “future” Lucene majors usually apply to **snapshot restore** or **binary** index copies. **Remote reindex** and **document replay** (scroll/PIT/bulk/Logstash) **write new segments** on Elastic and typically **avoid** this class of problem.
+
+2. **Elasticsearch document `_version` / external versioning**  
+   If bulk writes use **external** versioning, replays can **conflict**. For migration, prefer **omitting** external version on the first load, or use `POST _reindex?conflicts=proceed` for idempotent reruns. See [Remote_Reindex/README.md](Remote_Reindex/README.md).
+
+3. **Extra fields in `_source`** (e.g. legacy `version`, noisy metadata)  
+   Strip with a reindex **`script`** ([Remote_Reindex/Elastic_DEVTOOLS_reindex_with_script.json](Remote_Reindex/Elastic_DEVTOOLS_reindex_with_script.json)) or Logstash `mutate`. Note: sample pipelines remove Logstash’s **`@version`** field only—that is **not** the cluster index-format version.
+
+**Snapshot restore** from OpenSearch into Elasticsearch is generally **not** a supported cross-product path for arbitrary versions—prefer **reindex** or **streaming ETL**.
+
+## Ordering guarantees (FIFO-style)
+
+Elasticsearch applies updates **in parallel across shards**; **global strict FIFO** for an entire index is not guaranteed.
+
+- **Same `_id` (causal updates):** use **one writer path per index** (or partition by key). For Logstash: `pipeline.workers => 1` and `pipeline.ordered => true` ([Logstash_input/README.md](Logstash_input/README.md)).
+- **Kafka:** set the **record key** to `_id` (or business key) so updates for that id land in one partition; see [docs/KAFKA_MIGRATION.md](docs/KAFKA_MIGRATION.md).
+- **Remote reindex:** order follows **scroll/PIT** iteration, not necessarily **business event time**. For time-ordered backfills, use a **sort** on a timestamp and/or **time-sliced** jobs.
+
+## Failure, retries, and replay
+
+- **Idempotent `_id`:** keep OpenSearch `_id` on the destination so retries do not duplicate documents.
+- **Remote reindex:** use async tasks; on failure, investigate `GET _tasks/<id>` and rerun with `conflicts=proceed` where appropriate.
+- **Logstash:** enable Elasticsearch **output retries**; configure **dead letter queue (DLQ)** for poison events; for resumable chunks, prefer **time-bounded queries** in a custom pipeline.
+- **Kafka:** at-least-once consumers + **idempotent** bulk by `_id`; **dead-letter topic**; replay from retained history—[docs/KAFKA_MIGRATION.md](docs/KAFKA_MIGRATION.md).
+- **Checkpointed extract:** if you must minimize re-reading OpenSearch, consider a small **PIT + `search_after`** worker—[docs/CHECKPOINT_ETL.md](docs/CHECKPOINT_ETL.md).
+
+After any phase, run [validate_migration.py](validate_migration.py).
+
+## Large index throughput checklist
+
+Use this when migrations must finish in **hours**, not weeks:
+
+| Step | Action |
+|------|--------|
+| Destination index | Pre-create with `refresh_interval: -1` and `number_of_replicas: 0` ([Remote_Reindex/Elastic_destination_index_settings.json](Remote_Reindex/Elastic_destination_index_settings.json)); restore production settings **after** load. |
+| Remote reindex | Use `wait_for_completion=false`, tune `scroll`, **`size`**, **`socket_timeout`** ([Remote_Reindex/Elastic_DEVTOOLS_reindex_large.json](Remote_Reindex/Elastic_DEVTOOLS_reindex_large.json)); consider **`slices`** for parallel work when ordering constraints allow. |
+| Concurrency | Cap **parallel indices / slices** so source and **Elastic** ingest threads are not saturated; watch OpenSearch `Threadpool` rejections and Elastic bulk latency. |
+| Ordering vs speed | **Do not** massively parallelize if you require strict **per-id** ordering; trade throughput for a **single worker** or **Kafka key = `_id`**. |
+| Post-migrate | `POST <index>/_settings` to set `refresh_interval` (e.g. `1s`) and `number_of_replicas` as required; optionally `_forcemerge` only after understanding merge cost. |
+
+## Packaging (Docker vs local Logstash)
+
+Docker Compose is the **default** path ([Logstash_input/README.md](Logstash_input/README.md)). For hosts without Docker, see [docs/PACKAGING.md](docs/PACKAGING.md).
+
+## Semantic / vector fields (phase 2)
+
+For `knn_vector`, OpenSearch **semantic**, and Elasticsearch **`semantic_text`** / inference, see [docs/SEMANTIC_MIGRATION.md](docs/SEMANTIC_MIGRATION.md) and [examples/semantic_text/](examples/semantic_text/).
 
 ## Option A: Remote reindex (recommended for one-off or batch)
 
@@ -54,7 +110,7 @@ For a **copy-paste org template** (RACI, links, checklists), see [docs/RUNBOOK_T
 ## Option B: Logstash
 
 1. **Prepare environment**  
-   Copy [.env.example](.env.example) to `.env` at the repo root and set `SOURCE_OPENSEARCH_*`, `LOGSTASH_SOURCE_INDEX`, `LOGSTASH_DEST_INDEX`, and either `ELASTIC_CLOUD_ID` + `ELASTIC_CLOUD_AUTH` or (for the `apikey` compose profile) `DEST_ELASTIC_HOST` + `DEST_ELASTIC_API_KEY`. See [Logstash_input/README.md](Logstash_input/README.md).
+   Copy [.env.example](.env.example) to `.env` at the repo root and set `SOURCE_OPENSEARCH_*`, `LOGSTASH_SOURCE_INDEX`, `LOGSTASH_DEST_INDEX`, and either `ELASTIC_CLOUD_ID` + `ELASTIC_CLOUD_AUTH` or (for the `apikey` compose profile) `DEST_ELASTIC_HOST` + `DEST_ELASTIC_API_KEY`. See [Logstash_input/README.md](Logstash_input/README.md) and [docs/PACKAGING.md](docs/PACKAGING.md).
 
 2. **Run Logstash**  
    From [Logstash_input](Logstash_input): `docker compose up --build` (or `--profile apikey` for API-key output). For custom configs only, you can still use [sample_logstash.conf](Logstash_input/sample_logstash.conf) / [sample_Dockerfile](Logstash_input/sample_Dockerfile). For multiple indices, run one pipeline per index or use [multi_index_reindex.py](multi_index_reindex.py) to drive sequential runs.
@@ -67,9 +123,13 @@ For a **copy-paste org template** (RACI, links, checklists), see [docs/RUNBOOK_T
 - Prefer **pre-creating** the destination index on Elastic with explicit mappings if you need strict types; otherwise reindex can create the index from the remote mapping.
 - Re-run conflicts: use `POST _reindex?conflicts=proceed` (optionally with `scroll` / `wait_for_completion=false`) so version conflicts do not abort the whole job. See [Remote_Reindex/README.md](Remote_Reindex/README.md).
 
+## Option C: Kafka buffer (optional)
+
+For durable replay and scaled consumers, see [docs/KAFKA_MIGRATION.md](docs/KAFKA_MIGRATION.md). Often combined with Logstash or a custom harvester.
+
 ## Serverless
 
-- **Elastic Cloud Serverless** does not support remote reindex to the same degree as Hosted; use **Logstash** (or similar) to push into Serverless. See [docs/SERVERLESS.md](docs/SERVERLESS.md).
+- **Elastic Cloud Serverless** does not support remote reindex to the same degree as Hosted; use **Logstash**, **Kafka + consumer**, or **custom bulk** to push into Serverless. See [docs/SERVERLESS.md](docs/SERVERLESS.md).
 - **Amazon OpenSearch Serverless** as a source often requires Logstash or a custom signing client; see [docs/SERVERLESS.md](docs/SERVERLESS.md).
 
 ## Dual-write and cutover

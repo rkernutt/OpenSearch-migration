@@ -1,0 +1,16 @@
+{
+  "description": "Example inference pipeline; replace model_id and fields; validate shape against your Elasticsearch version (E5/EIS/managed differ).",
+  "processors": [
+    {
+      "inference": {
+        "model_id": "REPLACE_WITH_INFERENCE_ENDPOINT_ID",
+        "input_output": [
+          {
+            "input_field": "body_text",
+            "output_field": "body_embedding"
+          }
+        ]
+      }
+    }
+  ]
+}

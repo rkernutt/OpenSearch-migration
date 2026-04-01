@@ -2,6 +2,12 @@
 
 This directory contains a **Dockerfile** and **docker-compose** setup that runs Logstash with the `logstash-input-opensearch` plugin. Connection settings come from the **repository root `.env`** (same pattern as `validate_migration.py`). Do not commit `.env`.
 
+**New users:** fill `.env` using [examples/env/logstash-cloud-id.env.example](../examples/env/logstash-cloud-id.env.example) or [logstash-api-key.env.example](../examples/env/logstash-api-key.env.example), or follow [docs/GETTING_STARTED.md](../docs/GETTING_STARTED.md).
+
+## Local install (no Docker)
+
+Use the **same** `pipeline/*.conf` files on a host-installed Logstash; set environment variables via systemd or shell. See [docs/PACKAGING.md](../docs/PACKAGING.md).
+
 ## Quick start (Docker Compose)
 
 From **this directory** (`Logstash_input/`):
@@ -84,10 +90,20 @@ Ensure every `${...}` variable referenced in `pipeline/logstash.conf` is set in 
 
 The older [sample_Dockerfile](sample_Dockerfile) / `sample_logstash.conf` flow still works; **prefer `Dockerfile` + `docker-compose.yml` here** for `.env`-driven runs.
 
+## Ordering (FIFO-style per document id)
+
+Elasticsearch does not guarantee global write order across shards. If **updates to the same `_id` must be applied in order**, use:
+
+- **Single-threaded pipeline:** in `logstash.yml` (or pipeline settings), set `pipeline.workers: 1` and `pipeline.ordered: true` for this migration pipeline.
+- **Do not** run multiple pipelines writing the **same** destination index concurrently if ordering matters.
+
+For Kafka-mediated flows and **partition keys**, see [docs/KAFKA_MIGRATION.md](../docs/KAFKA_MIGRATION.md).
+
 ## Large indices and resilience
 
 - Prefer a **bounded query** in a custom pipeline for incremental runs (time range, etc.).
 - Increase heap if needed by extending `docker-compose.yml` `environment` with `LS_JAVA_OPTS` or adding it to `.env` and referencing it in compose (ensure compose passes it through—today compose does not fix `LS_JAVA_OPTS`; add under `environment:` if you need it).
+- Configure the Elasticsearch output **retry** options per [Elastic documentation](https://www.elastic.co/guide/en/logstash/current/plugins-outputs-elasticsearch.html); consider enabling the **dead letter queue** in `logstash.yml` for poison documents.
 
 ## Multiple indices
 
