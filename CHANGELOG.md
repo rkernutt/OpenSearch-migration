@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-04-02
+
+### Fixed
+
+- **Ruff import ordering** — `datetime` (stdlib) moved before third-party imports in `validate_migration.py`, `poll_reindex_task.py`, `preflight.py`, and `tests/test_new_utilities.py`; `ruff format` whitespace fixes applied. CI `ruff check` and `ruff format --check` now pass.
+- **Mock patch target in `tests/test_verify_mget_mock.py`** — updated patch from `validate_migration.requests.post` to `validate_migration._SESSION.post` to match the retry-session refactor in v1.1.0. Test was making live DNS lookups and failing in CI.
+
 ## [1.1.0] - 2026-04-02
 
 ### Added
