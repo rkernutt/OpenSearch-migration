@@ -9,13 +9,17 @@ import {
   EuiText,
   EuiBadge,
   EuiCallOut,
+  EuiPanel,
+  EuiSwitch,
 } from "@elastic/eui";
 
-export type MigrationMethod = "remote_reindex" | "logstash" | "kafka" | "vpc_proxy";
+export type MigrationMethod = "remote_reindex" | "logstash" | "kafka";
 
 interface MethodPageProps {
   method: MigrationMethod;
+  isVpcProxy: boolean;
   onMethodChange: (m: MigrationMethod) => void;
+  onVpcProxyChange: (v: boolean) => void;
   onBack: () => void;
   onNext: () => void;
 }
@@ -27,7 +31,6 @@ interface MethodCard {
   icon: string;
   pros: string[];
   badge?: { label: string; color: "primary" | "accent" | "warning" | "success" };
-  phase2?: boolean;
 }
 
 const METHODS: MethodCard[] = [
@@ -35,7 +38,7 @@ const METHODS: MethodCard[] = [
     id: "remote_reindex",
     title: "Remote Reindex",
     description:
-      "Use Elasticsearch's native _reindex API with a remote source pointing to OpenSearch. Elastic pulls data directly over HTTP.",
+      "Use Elasticsearch's native _reindex API with a remote source pointing to OpenSearch. Elastic pulls data directly over HTTP/HTTPS.",
     icon: "indexOpen",
     pros: ["No additional infrastructure", "Native Elastic feature", "Supports scripted transforms"],
     badge: { label: "Recommended", color: "success" },
@@ -44,7 +47,7 @@ const METHODS: MethodCard[] = [
     id: "logstash",
     title: "Logstash Pipeline",
     description:
-      "Run a Logstash Docker container as a migration pipeline. Reads from OpenSearch via HTTP input and writes to Elasticsearch output.",
+      "Run a Logstash Docker container (or EC2 instance via VPC proxy) as a migration pipeline. Reads from OpenSearch and writes to Elasticsearch.",
     icon: "pipelineApp",
     pros: ["Handles complex transforms", "Resumable with checkpoints", "Enrichment support"],
   },
@@ -57,19 +60,25 @@ const METHODS: MethodCard[] = [
     pros: ["Zero data loss guarantee", "Replay capability", "Decoupled from cluster health"],
     badge: { label: "High Reliability", color: "accent" },
   },
-  {
-    id: "vpc_proxy",
-    title: "VPC Proxy + Reindex",
-    description:
-      "Deploy a CloudFormation-managed proxy inside your VPC to bridge private OpenSearch to Elastic Cloud, then run Remote Reindex through it.",
-    icon: "securityApp",
-    pros: ["Works in fully private VPCs", "No internet exposure of source", "CloudFormation managed"],
-    badge: { label: "Phase 2", color: "warning" },
-    phase2: true,
-  },
 ];
 
-export function MethodPage({ method, onMethodChange, onBack, onNext }: MethodPageProps) {
+const VPC_PROXY_CALLOUT: Record<MigrationMethod, string> = {
+  remote_reindex:
+    "An nginx reverse proxy will be deployed inside your VPC via CloudFormation. The proxy NLB endpoint is used as the reindex target.",
+  logstash:
+    "Chef will install and configure Logstash directly on an EC2 instance inside your VPC. The migration runs automatically on deploy — no external Logstash container needed.",
+  kafka:
+    "Chef will install Kafka Connect on an EC2 instance inside your VPC. Source and sink connectors are configured automatically on deploy.",
+};
+
+export function MethodPage({
+  method,
+  isVpcProxy,
+  onMethodChange,
+  onVpcProxyChange,
+  onBack,
+  onNext,
+}: MethodPageProps) {
   return (
     <>
       <EuiTitle size="s">
@@ -80,26 +89,10 @@ export function MethodPage({ method, onMethodChange, onBack, onNext }: MethodPag
       </EuiText>
       <EuiSpacer size="l" />
 
-      {method === "vpc_proxy" && (
-        <>
-          <EuiCallOut
-            title="VPC Proxy selected — Phase 2 feature"
-            color="warning"
-            iconType="warning"
-            size="s"
-          >
-            <p>
-              The VPC Proxy option will guide you through deploying a CloudFormation stack before
-              the migration begins. You can configure and deploy it in the Execute step.
-            </p>
-          </EuiCallOut>
-          <EuiSpacer size="l" />
-        </>
-      )}
-
+      {/* Method cards */}
       <EuiFlexGroup gutterSize="m" wrap>
         {METHODS.map((m) => (
-          <EuiFlexItem key={m.id} style={{ minWidth: 280, maxWidth: 320 }}>
+          <EuiFlexItem key={m.id} style={{ minWidth: 280, maxWidth: 340 }}>
             <EuiCard
               title={
                 <EuiFlexGroup gutterSize="s" alignItems="center" responsive={false}>
@@ -113,7 +106,13 @@ export function MethodPage({ method, onMethodChange, onBack, onNext }: MethodPag
                   )}
                 </EuiFlexGroup>
               }
-              icon={<EuiIcon type={m.icon} size="xl" color={method === m.id ? "primary" : "subdued"} />}
+              icon={
+                <EuiIcon
+                  type={m.icon}
+                  size="xl"
+                  color={method === m.id ? "primary" : "subdued"}
+                />
+              }
               description={
                 <>
                   <EuiText size="s">
@@ -140,6 +139,42 @@ export function MethodPage({ method, onMethodChange, onBack, onNext }: MethodPag
         ))}
       </EuiFlexGroup>
 
+      <EuiSpacer size="l" />
+
+      {/* VPC Proxy panel */}
+      <EuiPanel hasBorder color="subdued" paddingSize="l">
+        <EuiFlexGroup gutterSize="m" alignItems="center" responsive={false}>
+          <EuiFlexItem grow={false}>
+            <EuiSwitch
+              label="Source cluster is in a private VPC (no internet egress)"
+              checked={isVpcProxy}
+              onChange={(e) => onVpcProxyChange(e.target.checked)}
+            />
+          </EuiFlexItem>
+        </EuiFlexGroup>
+
+        {isVpcProxy && (
+          <>
+            <EuiSpacer size="m" />
+            <EuiCallOut
+              color="primary"
+              size="s"
+              iconType="securityApp"
+            >
+              <p>{VPC_PROXY_CALLOUT[method]}</p>
+            </EuiCallOut>
+            <EuiSpacer size="s" />
+            <EuiText size="s" color="subdued">
+              <p>
+                The Deploy Proxy step will appear before index selection for Remote Reindex. For
+                Logstash and Kafka, the CloudFormation deploy command is generated on the Execute
+                page with all migration parameters pre-filled.
+              </p>
+            </EuiText>
+          </>
+        )}
+      </EuiPanel>
+
       <EuiSpacer size="xl" />
 
       <EuiFlexGroup gutterSize="m" responsive={false}>
@@ -150,7 +185,7 @@ export function MethodPage({ method, onMethodChange, onBack, onNext }: MethodPag
         </EuiFlexItem>
         <EuiFlexItem grow={false}>
           <EuiButton fill iconType="arrowRight" iconSide="right" onClick={onNext}>
-            Next: Indices
+            {isVpcProxy && method === "remote_reindex" ? "Next: Deploy Proxy" : "Next: Indices"}
           </EuiButton>
         </EuiFlexItem>
       </EuiFlexGroup>

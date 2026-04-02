@@ -1,9 +1,7 @@
-import { useState } from "react";
 import {
   EuiTitle,
   EuiSpacer,
   EuiButton,
-  EuiButtonEmpty,
   EuiFlexGroup,
   EuiFlexItem,
   EuiText,
@@ -12,13 +10,12 @@ import {
   EuiCodeBlock,
   EuiTabbedContent,
   EuiAccordion,
-  EuiCopy,
   EuiBadge,
   EuiHorizontalRule,
   EuiIcon,
 } from "@elastic/eui";
 import type { MigrationMethod } from "./MethodPage";
-import type { IndexInfo } from "./IndicesPage";
+import type { TargetType } from "./TargetPage";
 
 interface ExecutePageProps {
   sourceEndpoint: string;
@@ -28,13 +25,19 @@ interface ExecutePageProps {
   sourcePassword: string;
   targetUrl: string;
   targetApiKey: string;
+  targetType: TargetType;
   migrationMethod: MigrationMethod;
-  /** Phase 2: NLB endpoint of the deployed VPC proxy (vpc_proxy mode only) */
+  isVpcProxy: boolean;
   proxyEndpoint: string;
   selectedIndices: string[];
-  availableIndices: IndexInfo[];
+  availableIndices?: Array<{ name: string; docCount: number; sizeBytes: number }>;
   batchSize: number;
   slices: string;
+  // VPC proxy / CFN params
+  vpcId: string;
+  subnetId: string;
+  allowedCidr: string;
+  instanceType: string;
   onBack: () => void;
 }
 
@@ -47,9 +50,10 @@ function genRemoteReindexDevTools(
   batchSize: number,
   slices: string
 ): string {
-  const bodies = indices.map((idx) => {
-    const slicesVal = slices === "auto" ? '"auto"' : Number(slices);
-    return `POST _reindex?slices=${slicesVal}&wait_for_completion=false
+  return indices
+    .map((idx) => {
+      const slicesVal = slices === "auto" ? '"auto"' : Number(slices);
+      return `POST _reindex?slices=${slicesVal}&wait_for_completion=false
 {
   "source": {
     "remote": {
@@ -64,13 +68,13 @@ function genRemoteReindexDevTools(
     "index": "${idx}"
   }
 }`;
-  });
-  return bodies.join("\n\n");
+    })
+    .join("\n\n");
 }
 
 function genRemoteReindexCurl(
   sourceEndpoint: string,
-  targetUrl: string,
+  effectiveTargetUrl: string,
   targetApiKey: string,
   indices: string[],
   batchSize: number,
@@ -79,7 +83,7 @@ function genRemoteReindexCurl(
   return indices
     .map((idx) => {
       const slicesVal = slices === "auto" ? "auto" : slices;
-      return `curl -X POST "${targetUrl}/_reindex?slices=${slicesVal}&wait_for_completion=false" \\
+      return `curl -X POST "${effectiveTargetUrl}/_reindex?slices=${slicesVal}&wait_for_completion=false" \\
   -H "Authorization: ApiKey ${targetApiKey}" \\
   -H "Content-Type: application/json" \\
   -d '{
@@ -125,11 +129,7 @@ services:
     restart: unless-stopped`;
 }
 
-function genLogstashConf(
-  sourceEndpoint: string,
-  indices: string[],
-  batchSize: number
-): string {
+function genLogstashConf(sourceEndpoint: string, indices: string[], batchSize: number): string {
   const indexList = indices.map((i) => `"${i}"`).join(", ");
   return `input {
   elasticsearch {
@@ -166,10 +166,7 @@ output {
 }`;
 }
 
-function genKafkaSourceConnector(
-  sourceEndpoint: string,
-  indices: string[]
-): string {
+function genKafkaSourceConnector(sourceEndpoint: string, indices: string[]): string {
   return `{
   "name": "opensearch-source-connector",
   "config": {
@@ -186,11 +183,7 @@ function genKafkaSourceConnector(
 }`;
 }
 
-function genKafkaSinkConnector(
-  targetUrl: string,
-  targetApiKey: string,
-  indices: string[]
-): string {
+function genKafkaSinkConnector(targetUrl: string, targetApiKey: string, indices: string[]): string {
   return `{
   "name": "elasticsearch-sink-connector",
   "config": {
@@ -208,6 +201,82 @@ function genKafkaSinkConnector(
 }`;
 }
 
+function genLogstashVpcCfn(props: {
+  vpcId: string;
+  subnetId: string;
+  sourceEndpoint: string;
+  sourceAuthType: "iam" | "basic";
+  sourceUsername: string;
+  targetUrl: string;
+  targetApiKey: string;
+  indices: string[];
+  batchSize: number;
+  instanceType: string;
+  allowedCidr: string;
+  sourceRegion: string;
+}): string {
+  const {
+    vpcId, subnetId, sourceEndpoint, sourceAuthType, sourceUsername,
+    targetUrl, targetApiKey, indices, batchSize, instanceType, allowedCidr, sourceRegion,
+  } = props;
+  return `aws cloudformation deploy \\
+  --template-file iac/cloudformation/vpc-logstash.yaml \\
+  --stack-name opensearch-migration-logstash \\
+  --parameter-overrides \\
+    VpcId=${vpcId || "<VPC_ID>"} \\
+    SubnetId=${subnetId || "<SUBNET_ID>"} \\
+    OpenSearchEndpoint=${sourceEndpoint} \\
+    OpenSearchAuthType=${sourceAuthType} \\
+    OpenSearchUsername=${sourceAuthType === "basic" ? sourceUsername : ""} \\
+    ElasticEndpoint=${targetUrl} \\
+    ElasticApiKeyParam=${targetApiKey} \\
+    IndicesToMigrate=${indices.join(",")} \\
+    BatchSize=${batchSize} \\
+    InstanceType=${instanceType || "t3.medium"} \\
+    AllowedCidr=${allowedCidr || "10.0.0.0/8"} \\
+  --capabilities CAPABILITY_IAM \\
+  --region ${sourceRegion}`;
+}
+
+function genKafkaVpcCfn(props: {
+  vpcId: string;
+  subnetId: string;
+  sourceEndpoint: string;
+  targetUrl: string;
+  targetApiKey: string;
+  indices: string[];
+  instanceType: string;
+  allowedCidr: string;
+  sourceRegion: string;
+}): string {
+  const {
+    vpcId, subnetId, sourceEndpoint, targetUrl, targetApiKey,
+    indices, instanceType, allowedCidr, sourceRegion,
+  } = props;
+  return `aws cloudformation deploy \\
+  --template-file iac/cloudformation/vpc-kafka.yaml \\
+  --stack-name opensearch-migration-kafka \\
+  --parameter-overrides \\
+    VpcId=${vpcId || "<VPC_ID>"} \\
+    SubnetId=${subnetId || "<SUBNET_ID>"} \\
+    OpenSearchEndpoint=${sourceEndpoint} \\
+    ElasticEndpoint=${targetUrl} \\
+    ElasticApiKeyParam=${targetApiKey} \\
+    IndicesToMigrate=${indices.join(",")} \\
+    InstanceType=${instanceType || "m5.large"} \\
+    AllowedCidr=${allowedCidr || "10.0.0.0/8"} \\
+  --capabilities CAPABILITY_IAM \\
+  --region ${sourceRegion}`;
+}
+
+// ── Target type badge ─────────────────────────────────────────────────────────
+
+function targetTypeBadge(t: TargetType) {
+  if (t === "cloud_hosted")    return <EuiBadge color="primary">Cloud Hosted</EuiBadge>;
+  if (t === "cloud_serverless") return <EuiBadge color="accent">Serverless</EuiBadge>;
+  return <EuiBadge color="hollow">Self-Managed</EuiBadge>;
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function ExecutePage({
@@ -218,31 +287,30 @@ export function ExecutePage({
   sourcePassword,
   targetUrl,
   targetApiKey,
+  targetType,
   migrationMethod,
+  isVpcProxy,
   proxyEndpoint,
   selectedIndices,
-  availableIndices,
+  availableIndices: _availableIndices,
   batchSize,
   slices,
+  vpcId,
+  subnetId,
+  allowedCidr,
+  instanceType,
   onBack,
 }: ExecutePageProps) {
-  // When vpc_proxy is selected, reindex commands target the proxy NLB, not Elastic Cloud directly.
-  // The proxy forwards the traffic (including auth headers) to Elastic Cloud from within the VPC.
-  const effectiveTargetUrl = migrationMethod === "vpc_proxy" && proxyEndpoint
-    ? proxyEndpoint
-    : targetUrl;
-  const [copied, setCopied] = useState<string | null>(null);
-
-  function handleCopy(key: string) {
-    setCopied(key);
-    setTimeout(() => setCopied(null), 2000);
-  }
+  // For remote_reindex + isVpcProxy: route commands through the proxy NLB endpoint
+  const effectiveTargetUrl =
+    isVpcProxy && migrationMethod === "remote_reindex" && proxyEndpoint
+      ? proxyEndpoint
+      : targetUrl;
 
   const methodLabel: Record<MigrationMethod, string> = {
     remote_reindex: "Remote Reindex",
     logstash: "Logstash Pipeline",
     kafka: "Kafka Bridge",
-    vpc_proxy: "VPC Proxy + Reindex",
   };
 
   // ── Remote Reindex tabs ──────────────────────────────────────────────────
@@ -255,32 +323,13 @@ export function ExecutePage({
           <EuiSpacer size="m" />
           <EuiText size="s" color="subdued">
             <p>
-              Paste this into <strong>Kibana → Dev Tools</strong> on your Elastic target cluster.
-              Each POST starts an async reindex task; monitor with{" "}
-              <code>GET _tasks?actions=*reindex&detailed</code>.
+              Paste this into <strong>Kibana &rarr; Dev Tools</strong> on your Elastic target
+              cluster. Each POST starts an async reindex task; monitor with{" "}
+              <code>GET _tasks?actions=*reindex&amp;detailed</code>.
             </p>
           </EuiText>
           <EuiSpacer size="m" />
-          <EuiCopy
-            textToCopy={genRemoteReindexDevTools(
-              sourceEndpoint,
-              targetApiKey,
-              selectedIndices,
-              batchSize,
-              slices
-            )}
-          >
-            {(copy) => (
-              <EuiButtonEmpty
-                size="s"
-                iconType={copied === "devtools" ? "check" : "copyClipboard"}
-                onClick={() => { copy(); handleCopy("devtools"); }}
-              >
-                {copied === "devtools" ? "Copied!" : "Copy"}
-              </EuiButtonEmpty>
-            )}
-          </EuiCopy>
-          <EuiCodeBlock language="json" fontSize="s" paddingSize="m" isCopyable={false} overflowHeight={400}>
+          <EuiCodeBlock language="json" fontSize="s" paddingSize="m" isCopyable overflowHeight={400}>
             {genRemoteReindexDevTools(sourceEndpoint, targetApiKey, selectedIndices, batchSize, slices)}
           </EuiCodeBlock>
         </>
@@ -293,20 +342,25 @@ export function ExecutePage({
         <>
           <EuiSpacer size="m" />
           <EuiText size="s" color="subdued">
-            <p>
-              Run these commands from any machine with network access to both clusters.
-            </p>
+            <p>Run these commands from any machine with network access to both clusters.</p>
           </EuiText>
           <EuiSpacer size="m" />
           <EuiCodeBlock language="bash" fontSize="s" paddingSize="m" isCopyable overflowHeight={400}>
-            {genRemoteReindexCurl(sourceEndpoint, effectiveTargetUrl, targetApiKey, selectedIndices, batchSize, slices)}
+            {genRemoteReindexCurl(
+              sourceEndpoint,
+              effectiveTargetUrl,
+              targetApiKey,
+              selectedIndices,
+              batchSize,
+              slices
+            )}
           </EuiCodeBlock>
         </>
       ),
     },
   ];
 
-  // ── Logstash tabs ────────────────────────────────────────────────────────
+  // ── Logstash tabs (no VPC) ───────────────────────────────────────────────
   const logstashTabs = [
     {
       id: "compose",
@@ -315,7 +369,15 @@ export function ExecutePage({
         <>
           <EuiSpacer size="m" />
           <EuiCodeBlock language="yaml" fontSize="s" paddingSize="m" isCopyable overflowHeight={300}>
-            {genLogstashDockerCompose(sourceEndpoint, sourceAuthType, sourceUsername, sourcePassword, effectiveTargetUrl, targetApiKey, selectedIndices)}
+            {genLogstashDockerCompose(
+              sourceEndpoint,
+              sourceAuthType,
+              sourceUsername,
+              sourcePassword,
+              targetUrl,
+              targetApiKey,
+              selectedIndices
+            )}
           </EuiCodeBlock>
         </>
       ),
@@ -327,7 +389,10 @@ export function ExecutePage({
         <>
           <EuiSpacer size="m" />
           <EuiText size="s" color="subdued">
-            <p>Save as <code>pipeline/logstash.conf</code> alongside <code>docker-compose.yml</code>.</p>
+            <p>
+              Save as <code>pipeline/logstash.conf</code> alongside{" "}
+              <code>docker-compose.yml</code>.
+            </p>
           </EuiText>
           <EuiSpacer size="m" />
           <EuiCodeBlock language="ruby" fontSize="s" paddingSize="m" isCopyable overflowHeight={400}>
@@ -354,7 +419,7 @@ docker compose logs -f logstash`}
     },
   ];
 
-  // ── Kafka tabs ───────────────────────────────────────────────────────────
+  // ── Kafka tabs (no VPC) ──────────────────────────────────────────────────
   const kafkaTabs = [
     {
       id: "source_connector",
@@ -383,7 +448,7 @@ docker compose logs -f logstash`}
           </EuiText>
           <EuiSpacer size="m" />
           <EuiCodeBlock language="json" fontSize="s" paddingSize="m" isCopyable overflowHeight={300}>
-            {genKafkaSinkConnector(effectiveTargetUrl, targetApiKey, selectedIndices)}
+            {genKafkaSinkConnector(targetUrl, targetApiKey, selectedIndices)}
           </EuiCodeBlock>
         </>
       ),
@@ -403,7 +468,7 @@ docker compose logs -f logstash`}
       </EuiText>
       <EuiSpacer size="l" />
 
-      {/* Summary */}
+      {/* ── Summary panel ─────────────────────────────────────────────── */}
       <EuiPanel color="subdued" hasBorder paddingSize="m">
         <EuiFlexGroup gutterSize="xl" wrap responsive={false}>
           <EuiFlexItem grow={false}>
@@ -421,12 +486,23 @@ docker compose logs -f logstash`}
                 <strong>Target</strong>
                 <br />
                 <code>{effectiveTargetUrl || "—"}</code>
-                {migrationMethod === "vpc_proxy" && proxyEndpoint && (
+                {isVpcProxy && proxyEndpoint && (
                   <>
                     <br />
-                    <EuiBadge color="warning" style={{ marginTop: 4 }}>via VPC Proxy</EuiBadge>
+                    <EuiBadge color="warning" style={{ marginTop: 4 }}>
+                      via VPC Proxy
+                    </EuiBadge>
                   </>
                 )}
+              </p>
+            </EuiText>
+          </EuiFlexItem>
+          <EuiFlexItem grow={false}>
+            <EuiText size="s">
+              <p>
+                <strong>Target Type</strong>
+                <br />
+                {targetTypeBadge(targetType)}
               </p>
             </EuiText>
           </EuiFlexItem>
@@ -462,56 +538,90 @@ docker compose logs -f logstash`}
 
       <EuiSpacer size="l" />
 
-      {/* VPC Proxy Phase 2 — show proxy status and reindex heading */}
-      {migrationMethod === "vpc_proxy" && (
+      {/* ── remote_reindex ────────────────────────────────────────────── */}
+      {migrationMethod === "remote_reindex" && (
         <>
-          {proxyEndpoint ? (
-            <EuiCallOut
-              title="VPC Proxy active — reindex commands route through proxy"
-              color="success"
-              iconType="check"
-              size="s"
-            >
-              <EuiText size="s">
-                <p>
-                  All generated commands use the proxy NLB endpoint{" "}
-                  <code>{proxyEndpoint}</code> as the target.
-                  The proxy forwards requests to <code>{targetUrl}</code> over the internet
-                  via your VPC NAT gateway.
-                </p>
-              </EuiText>
-            </EuiCallOut>
-          ) : (
-            <EuiCallOut
-              title="VPC Proxy not yet configured"
-              color="warning"
-              iconType="warning"
-              size="s"
-            >
-              <p>
-                Go back to <strong>Deploy Proxy</strong> to complete the CloudFormation
-                deployment and enter the proxy endpoint before running these commands.
-              </p>
-            </EuiCallOut>
+          {isVpcProxy && (
+            <>
+              {proxyEndpoint ? (
+                <EuiCallOut
+                  title={`VPC Proxy active — routing through ${proxyEndpoint}`}
+                  color="success"
+                  iconType="check"
+                  size="s"
+                />
+              ) : (
+                <EuiCallOut
+                  title="VPC Proxy endpoint not configured"
+                  color="warning"
+                  iconType="warning"
+                  size="s"
+                >
+                  <p>
+                    Go back to the <strong>Deploy Proxy</strong> step to complete the
+                    CloudFormation deployment and enter the proxy endpoint.
+                  </p>
+                </EuiCallOut>
+              )}
+              <EuiSpacer size="m" />
+            </>
           )}
-          <EuiSpacer size="l" />
-          <EuiTitle size="xs">
-            <h3>Remote Reindex via VPC Proxy</h3>
-          </EuiTitle>
-          <EuiSpacer size="m" />
+          <EuiTabbedContent tabs={remoteReindexTabs} initialSelectedTab={remoteReindexTabs[0]} />
         </>
       )}
 
-      {/* Method-specific config */}
-      {(migrationMethod === "remote_reindex" || migrationMethod === "vpc_proxy") && (
-        <EuiTabbedContent tabs={remoteReindexTabs} initialSelectedTab={remoteReindexTabs[0]} />
-      )}
-
-      {migrationMethod === "logstash" && (
+      {/* ── logstash, no VPC ─────────────────────────────────────────── */}
+      {migrationMethod === "logstash" && !isVpcProxy && (
         <EuiTabbedContent tabs={logstashTabs} initialSelectedTab={logstashTabs[0]} />
       )}
 
-      {migrationMethod === "kafka" && (
+      {/* ── logstash + VPC ───────────────────────────────────────────── */}
+      {migrationMethod === "logstash" && isVpcProxy && (
+        <>
+          <EuiCallOut
+            color="primary"
+            title="Logstash will run on EC2 via Chef — no local Docker needed"
+            iconType="pipelineApp"
+          />
+          <EuiSpacer size="m" />
+          <EuiCodeBlock language="bash" fontSize="s" paddingSize="m" isCopyable overflowHeight={300}>
+            {genLogstashVpcCfn({
+              vpcId,
+              subnetId,
+              sourceEndpoint,
+              sourceAuthType,
+              sourceUsername,
+              targetUrl,
+              targetApiKey,
+              indices: selectedIndices,
+              batchSize,
+              instanceType,
+              allowedCidr,
+              sourceRegion,
+            })}
+          </EuiCodeBlock>
+          <EuiSpacer size="m" />
+          <EuiText size="s" color="subdued">
+            <p>
+              Chef installs Logstash and starts the migration pipeline automatically. Monitor
+              progress via CloudWatch:
+            </p>
+          </EuiText>
+          <EuiSpacer size="s" />
+          <EuiCodeBlock language="bash" fontSize="s" paddingSize="m" isCopyable>
+            {`# Tail migration logs
+aws logs tail /migration/logstash --follow --region ${sourceRegion}
+
+# Check Logstash status via SSM (no SSH needed)
+aws ssm start-session --target <INSTANCE_ID> --region ${sourceRegion}
+sudo systemctl status logstash
+sudo tail -f /var/log/logstash/logstash-plain.log`}
+          </EuiCodeBlock>
+        </>
+      )}
+
+      {/* ── kafka, no VPC ────────────────────────────────────────────── */}
+      {migrationMethod === "kafka" && !isVpcProxy && (
         <>
           <EuiCallOut
             title="Prerequisites"
@@ -530,12 +640,41 @@ docker compose logs -f logstash`}
         </>
       )}
 
+      {/* ── kafka + VPC ──────────────────────────────────────────────── */}
+      {migrationMethod === "kafka" && isVpcProxy && (
+        <>
+          <EuiCallOut
+            color="primary"
+            title="Kafka Connect will run on EC2 via Chef — connectors are auto-configured on deploy"
+            iconType="cluster"
+          />
+          <EuiSpacer size="m" />
+          <EuiCodeBlock language="bash" fontSize="s" paddingSize="m" isCopyable overflowHeight={300}>
+            {genKafkaVpcCfn({
+              vpcId,
+              subnetId,
+              sourceEndpoint,
+              targetUrl,
+              targetApiKey,
+              indices: selectedIndices,
+              instanceType,
+              allowedCidr,
+              sourceRegion,
+            })}
+          </EuiCodeBlock>
+          <EuiSpacer size="m" />
+          <EuiText size="s" color="subdued">
+            <p>Chef installs Kafka Connect and configures source and sink connectors automatically.</p>
+          </EuiText>
+        </>
+      )}
+
       <EuiSpacer size="l" />
       <EuiHorizontalRule />
       <EuiSpacer size="m" />
 
-      {/* Monitor reindex tasks */}
-      {(migrationMethod === "remote_reindex" || migrationMethod === "vpc_proxy") && (
+      {/* ── Monitor reindex tasks (all remote_reindex modes) ────────── */}
+      {migrationMethod === "remote_reindex" && (
         <EuiAccordion
           id="monitor"
           buttonContent={

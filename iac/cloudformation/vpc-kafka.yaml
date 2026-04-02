@@ -1,0 +1,621 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: "OpenSearch to Elastic Migration — Kafka Connect on EC2 via Chef (VPC mode)"
+
+# ---------------------------------------------------------------------------
+# Parameter grouping for the CloudFormation console
+# ---------------------------------------------------------------------------
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: "Source OpenSearch"
+        Parameters:
+          - OpenSearchEndpoint
+      - Label:
+          default: "Target Elastic"
+        Parameters:
+          - ElasticEndpoint
+          - ElasticApiKeyParam
+      - Label:
+          default: "Migration Settings"
+        Parameters:
+          - IndicesToMigrate
+      - Label:
+          default: "Infrastructure"
+        Parameters:
+          - VpcId
+          - SubnetId
+          - InstanceType
+          - AllowedCidr
+          - KeyPairName
+    ParameterLabels:
+      OpenSearchEndpoint:
+        default: "OpenSearch Endpoint URL"
+      ElasticEndpoint:
+        default: "Elastic Cloud Endpoint URL"
+      ElasticApiKeyParam:
+        default: "Elastic API Key (Base64-encoded)"
+      IndicesToMigrate:
+        default: "Indices to Migrate (comma-separated)"
+      VpcId:
+        default: "VPC ID"
+      SubnetId:
+        default: "Private Subnet ID"
+      InstanceType:
+        default: "EC2 Instance Type"
+      AllowedCidr:
+        default: "Allowed CIDR (inbound)"
+      KeyPairName:
+        default: "EC2 Key Pair Name (optional)"
+
+# ---------------------------------------------------------------------------
+# Parameters
+# ---------------------------------------------------------------------------
+Parameters:
+
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC to deploy into.
+
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: >
+      Private subnet for the Kafka Connect EC2 instance. The subnet must have
+      outbound internet access via a NAT gateway so Kafka Connect can reach
+      both the OpenSearch cluster and Elastic Cloud.
+
+  OpenSearchEndpoint:
+    Type: String
+    Description: >
+      Full URL of the source Amazon OpenSearch Service domain.
+      Example: https://search-my-domain-xxx.us-east-1.es.amazonaws.com
+
+  ElasticEndpoint:
+    Type: String
+    Description: >
+      Full Elasticsearch URL of the Elastic Cloud target including scheme and port.
+      Example: https://my-deployment.es.us-east-1.aws.elastic-cloud.com:9243
+
+  ElasticApiKeyParam:
+    Type: String
+    NoEcho: true
+    Description: >
+      Base64-encoded Elasticsearch API key for the Elastic Cloud target.
+      Format: base64("<id>:<api_key>")
+
+  IndicesToMigrate:
+    Type: String
+    Description: >
+      Comma-separated list of index names to migrate.
+      Example: logs-2024,metrics-2024
+
+  InstanceType:
+    Type: String
+    Default: m5.large
+    AllowedValues:
+      - m5.large
+      - m5.xlarge
+      - m5.2xlarge
+      - r5.large
+      - r5.xlarge
+      - r5.2xlarge
+    Description: >
+      EC2 instance type. Kafka Connect requires at least 4 GB RAM; m5.large is
+      the minimum recommended.
+
+  AllowedCidr:
+    Type: String
+    Default: 10.0.0.0/8
+    AllowedPattern: "^(\\d{1,3}\\.){3}\\d{1,3}/\\d{1,2}$"
+    ConstraintDescription: Must be a valid CIDR block.
+    Description: CIDR range allowed to reach the Kafka broker (TCP 9092) and Kafka Connect REST API (TCP 8083).
+
+  KeyPairName:
+    Type: String
+    Default: ""
+    Description: >
+      Optional EC2 key pair name for SSH access. Leave empty to disable SSH.
+      The security group does not open port 22; use SSM Session Manager instead.
+
+# ---------------------------------------------------------------------------
+# Conditions
+# ---------------------------------------------------------------------------
+Conditions:
+  HasKeyPair: !Not [!Equals [!Ref KeyPairName, ""]]
+
+# ---------------------------------------------------------------------------
+# Resources
+# ---------------------------------------------------------------------------
+Resources:
+
+  # -------------------------------------------------------------------------
+  # Security Group
+  # -------------------------------------------------------------------------
+  KafkaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Kafka migration — allows Kafka broker and Connect REST API from AllowedCidr
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 9092
+          ToPort: 9092
+          CidrIp: !Ref AllowedCidr
+          Description: Kafka broker
+        - IpProtocol: tcp
+          FromPort: 8083
+          ToPort: 8083
+          CidrIp: !Ref AllowedCidr
+          Description: Kafka Connect REST API
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+          Description: >
+            All outbound traffic — required for NAT gateway access to
+            OpenSearch endpoint and Elastic Cloud.
+      Tags:
+        - Key: Name
+          Value: opensearch-migration-kafka-sg
+        - Key: MigrationType
+          Value: kafka
+
+  # -------------------------------------------------------------------------
+  # IAM Role + Instance Profile
+  # -------------------------------------------------------------------------
+  KafkaInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "opensearch-migration-kafka-role-${AWS::StackName}"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        # SSM Session Manager and patch management
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        # CloudWatch agent metrics and logs
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+        # Read SSM parameters (retrieve API key at runtime)
+        - arn:aws:iam::aws:policy/AmazonSSMReadOnlyAccess
+      Policies:
+        - PolicyName: KafkaCloudWatchMetrics
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cloudwatch:PutMetricData
+                Resource: "*"
+      Tags:
+        - Key: Name
+          Value: opensearch-migration-kafka-role
+
+  KafkaInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub "opensearch-migration-kafka-profile-${AWS::StackName}"
+      Roles:
+        - !Ref KafkaInstanceRole
+
+  # -------------------------------------------------------------------------
+  # SSM Parameter — Elastic API Key
+  #
+  # NOTE: AWS CloudFormation does NOT support creating SSM SecureString
+  # parameters directly via AWS::SSM::Parameter. The Type must be "String".
+  # The value is passed via the NoEcho parameter ElasticApiKeyParam so it is
+  # not displayed in the console, but it is stored as plaintext in SSM.
+  # For higher security, create a SecureString parameter manually or via the
+  # AWS CLI before stack creation and reference it with
+  # "{{resolve:ssm-secure:/migration/kafka/elastic-api-key}}".
+  # -------------------------------------------------------------------------
+  ElasticApiKeySsmParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /migration/kafka/elastic-api-key
+      Type: String          # CFN cannot create SecureString — see note above
+      Value: !Ref ElasticApiKeyParam
+      Description: >
+        Base64-encoded Elastic Cloud API key used by the Kafka Connect migration
+        pipeline. Created by CloudFormation stack.
+      Tier: Standard
+      Tags:
+        MigrationType: kafka
+        StackName: !Ref AWS::StackName
+
+  # -------------------------------------------------------------------------
+  # EC2 Launch Template
+  # -------------------------------------------------------------------------
+  KafkaLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub "opensearch-migration-kafka-lt-${AWS::StackName}"
+      LaunchTemplateData:
+        # Resolve the latest Amazon Linux 2023 AMI from the SSM public parameter
+        ImageId: !Sub "{{resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64}}"
+        InstanceType: !Ref InstanceType
+        KeyName: !If [HasKeyPair, !Ref KeyPairName, !Ref AWS::NoValue]
+        IamInstanceProfile:
+          Arn: !GetAtt KafkaInstanceProfile.Arn
+        SecurityGroupIds:
+          - !Ref KafkaSecurityGroup
+        # Require IMDSv2 — disables legacy IMDSv1 for improved instance security
+        MetadataOptions:
+          HttpTokens: required
+          HttpPutResponseHopLimit: 1
+          HttpEndpoint: enabled
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            # =================================================================
+            # OpenSearch → Elastic migration via Kafka Connect + Chef Solo
+            # Logs are tee'd to /var/log/user-data.log and /dev/console so
+            # they appear in both the CloudWatch log stream and the EC2
+            # system console output.
+            # =================================================================
+            set -ex
+            exec > >(tee /var/log/user-data.log | tee /dev/console) 2>&1
+
+            echo "=== [1/8] Installing OS packages ==="
+            dnf install -y java-11-amazon-corretto ruby wget tar
+
+            echo "=== [2/8] Installing Chef Solo 18 via Omnitruck ==="
+            curl -fsSL https://omnitruck.chef.io/install.sh | bash -s -- -v 18
+
+            echo "=== [3/8] Creating Chef cookbook skeleton ==="
+            mkdir -p /var/chef/cookbooks/kafka_migration/recipes
+            mkdir -p /var/chef/cookbooks/kafka_migration/templates/default
+
+            # ---------------------------------------------------------------
+            # metadata.rb
+            # ---------------------------------------------------------------
+            cat > /var/chef/cookbooks/kafka_migration/metadata.rb <<'METADATA'
+            name             'kafka_migration'
+            maintainer       'Ops'
+            maintainer_email 'ops@example.com'
+            license          'Apache-2.0'
+            description      'Installs and configures Kafka Connect for OpenSearch → Elastic migration'
+            version          '1.0.0'
+            METADATA
+
+            # ---------------------------------------------------------------
+            # default.rb recipe
+            # ---------------------------------------------------------------
+            cat > /var/chef/cookbooks/kafka_migration/recipes/default.rb <<'RECIPE'
+            #
+            # Cookbook: kafka_migration
+            # Recipe:   default
+            #
+            # Installs Confluent Community 7.6.0, configures Kafka Connect with
+            # an OpenSearch source connector and an Elasticsearch sink connector,
+            # registers both connectors and emits a CloudWatch custom metric.
+            #
+
+            confluent_version = '7.6.0'
+            confluent_base    = '/opt/confluent'
+            confluent_dir     = "#{confluent_base}/confluent-community-#{confluent_version}"
+            confluent_current = "#{confluent_base}/current"
+            tarball_url       = "https://packages.confluent.io/archive/7.6/confluent-community-#{confluent_version}.tar.gz"
+            tarball_path      = "#{confluent_base}/confluent-community-#{confluent_version}.tar.gz"
+
+            # (a) Download Confluent Community tarball
+            directory confluent_base do
+              owner  'root'
+              group  'root'
+              mode   '0755'
+              action :create
+            end
+
+            remote_file tarball_path do
+              source   tarball_url
+              owner    'root'
+              group    'root'
+              mode     '0644'
+              checksum nil   # skip checksum to allow re-runs; pin in production
+              notifies :run, 'execute[extract_confluent]', :immediately
+            end
+
+            execute 'extract_confluent' do
+              command "tar -xzf #{tarball_path} -C #{confluent_base}"
+              creates confluent_dir
+              action  :nothing
+            end
+
+            # (b) Symlink /opt/confluent/current → versioned directory
+            link confluent_current do
+              to     confluent_dir
+              action :create
+            end
+
+            # (c) Kafka Connect distributed properties from template
+            template "#{confluent_current}/etc/kafka/connect-distributed.properties" do
+              source 'connect-distributed.properties.erb'
+              owner  'root'
+              group  'root'
+              mode   '0644'
+              action :create
+            end
+
+            # (d) Connector config directory
+            directory "#{confluent_base}/connectors" do
+              owner  'root'
+              group  'root'
+              mode   '0755'
+              action :create
+            end
+
+            # (e) Connector JSON configs from templates
+            template "#{confluent_base}/connectors/opensearch-source.json" do
+              source    'opensearch-source.json.erb'
+              owner     'root'
+              group     'root'
+              mode      '0644'
+              variables(
+                opensearch_host: node['opensearch_host'],
+                indices:         node['indices'],
+                batch_size:      node['batch_size']
+              )
+              action :create
+            end
+
+            template "#{confluent_base}/connectors/elasticsearch-sink.json" do
+              source    'elasticsearch-sink.json.erb'
+              owner     'root'
+              group     'root'
+              mode      '0644'
+              variables(
+                elastic_host: node['elastic_host'],
+                topics:       node['topics'],
+                api_key:      node['api_key']
+              )
+              action :create
+            end
+
+            # (f) Systemd service unit for kafka-connect
+            systemd_unit 'kafka-connect.service' do
+              content({
+                Unit: {
+                  Description:   'Kafka Connect (migration pipeline)',
+                  After:         'network.target',
+                  Documentation: 'https://docs.confluent.io/platform/current/connect/index.html'
+                },
+                Service: {
+                  Type:            'simple',
+                  User:            'root',
+                  ExecStart:       "#{confluent_current}/bin/connect-distributed #{confluent_current}/etc/kafka/connect-distributed.properties",
+                  Restart:         'on-failure',
+                  RestartSec:      '10',
+                  StandardOutput:  'journal',
+                  StandardError:   'journal'
+                },
+                Install: {
+                  WantedBy: 'multi-user.target'
+                }
+              })
+              action [:create, :enable]
+            end
+
+            # (g) Enable and start kafka-connect
+            service 'kafka-connect' do
+              action [:enable, :start]
+            end
+
+            # (h) Wait for Connect to be ready, then register both connectors
+            execute 'wait_for_connect' do
+              command 'sleep 60'
+              action  :run
+            end
+
+            execute 'register_opensearch_source' do
+              command <<~CMD
+                curl -s -o /dev/null -w "%{http_code}" \
+                  -X POST http://localhost:8083/connectors \
+                  -H 'Content-Type: application/json' \
+                  -d @#{confluent_base}/connectors/opensearch-source.json
+              CMD
+              action :run
+            end
+
+            execute 'register_elasticsearch_sink' do
+              command <<~CMD
+                curl -s -o /dev/null -w "%{http_code}" \
+                  -X POST http://localhost:8083/connectors \
+                  -H 'Content-Type: application/json' \
+                  -d @#{confluent_base}/connectors/elasticsearch-sink.json
+              CMD
+              action :run
+            end
+
+            # (i) Emit CloudWatch custom metric MigrationStarted
+            execute 'emit_migration_started_metric' do
+              command <<~CMD
+                aws cloudwatch put-metric-data \
+                  --namespace Migration/Kafka \
+                  --metric-name MigrationStarted \
+                  --value 1 \
+                  --unit Count \
+                  --region $(curl -s http://169.254.169.254/latest/meta-data/placement/region)
+              CMD
+              action :run
+            end
+            RECIPE
+
+            # ---------------------------------------------------------------
+            # connect-distributed.properties.erb
+            # ---------------------------------------------------------------
+            cat > /var/chef/cookbooks/kafka_migration/templates/default/connect-distributed.properties.erb <<'TEMPLATE'
+            bootstrap.servers=localhost:9092
+            group.id=migration-connect-cluster
+            key.converter=org.apache.kafka.connect.json.JsonConverter
+            value.converter=org.apache.kafka.connect.json.JsonConverter
+            key.converter.schemas.enable=false
+            value.converter.schemas.enable=false
+            offset.storage.topic=migration-offsets
+            config.storage.topic=migration-configs
+            status.storage.topic=migration-status
+            offset.storage.replication.factor=1
+            config.storage.replication.factor=1
+            status.storage.replication.factor=1
+            plugin.path=/opt/confluent/current/share/java
+            rest.port=8083
+            TEMPLATE
+
+            # ---------------------------------------------------------------
+            # opensearch-source.json.erb
+            # ---------------------------------------------------------------
+            cat > /var/chef/cookbooks/kafka_migration/templates/default/opensearch-source.json.erb <<'TEMPLATE'
+            {
+              "name": "opensearch-source",
+              "config": {
+                "connector.class": "io.confluent.connect.elasticsearch.ElasticsearchSourceConnector",
+                "tasks.max": "1",
+                "connection.url": "<%= @opensearch_host %>",
+                "index": "<%= @indices %>",
+                "topic.prefix": "migration.",
+                "poll.interval.ms": "1000",
+                "batch.max.rows": "<%= @batch_size %>"
+              }
+            }
+            TEMPLATE
+
+            # ---------------------------------------------------------------
+            # elasticsearch-sink.json.erb
+            # ---------------------------------------------------------------
+            cat > /var/chef/cookbooks/kafka_migration/templates/default/elasticsearch-sink.json.erb <<'TEMPLATE'
+            {
+              "name": "elasticsearch-sink",
+              "config": {
+                "connector.class": "io.confluent.connect.elasticsearch.ElasticsearchSinkConnector",
+                "tasks.max": "1",
+                "topics": "<%= @topics %>",
+                "connection.url": "<%= @elastic_host %>",
+                "connection.username": "elastic",
+                "connection.password": "<%= @api_key %>",
+                "key.ignore": "true",
+                "schema.ignore": "true",
+                "type.name": "_doc"
+              }
+            }
+            TEMPLATE
+
+            echo "=== [4/8] Fetching Elastic API key from SSM ==="
+            ELASTIC_API_KEY=$(aws ssm get-parameter \
+              --name /migration/kafka/elastic-api-key \
+              --query 'Parameter.Value' \
+              --output text \
+              --region $(curl -s http://169.254.169.254/latest/meta-data/placement/region))
+
+            echo "=== [5/8] Building topic list from index list ==="
+            # Prefix every index name with "migration." to produce topic names
+            INDICES="${IndicesToMigrate}"
+            TOPICS=$(echo "$INDICES" | sed 's/,/,migration./g; s/^/migration./')
+
+            echo "=== [6/8] Writing Chef node.json ==="
+            cat > /var/chef/node.json <<NODEJSON
+            {
+              "opensearch_host": "${OpenSearchEndpoint}",
+              "elastic_host":    "${ElasticEndpoint}",
+              "api_key":         "$ELASTIC_API_KEY",
+              "indices":         "$INDICES",
+              "topics":          "$TOPICS",
+              "batch_size":      1000,
+              "run_list":        ["recipe[kafka_migration]"]
+            }
+            NODEJSON
+
+            echo "=== [7/8] Writing Chef solo.rb ==="
+            cat > /var/chef/solo.rb <<'SOLORB'
+            cookbook_path  ['/var/chef/cookbooks']
+            node_path      '/var/chef'
+            log_level      :info
+            log_location   '/var/log/chef-solo.log'
+            SOLORB
+
+            echo "=== [8/8] Running Chef Solo ==="
+            /usr/bin/chef-solo -c /var/chef/solo.rb -j /var/chef/node.json
+
+            echo "=== Installing and configuring CloudWatch Agent ==="
+            dnf install -y amazon-cloudwatch-agent
+
+            # CloudWatch Agent config — ship kafka-connect and user-data logs
+            cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<'CWAGENT'
+            {
+              "logs": {
+                "logs_collected": {
+                  "files": {
+                    "collect_list": [
+                      {
+                        "file_path": "/var/log/kafka-connect/*.log",
+                        "log_group_name": "/migration/kafka",
+                        "log_stream_name": "{instance_id}/kafka-connect",
+                        "timezone": "UTC"
+                      },
+                      {
+                        "file_path": "/var/log/user-data.log",
+                        "log_group_name": "/migration/user-data",
+                        "log_stream_name": "{instance_id}/user-data",
+                        "timezone": "UTC"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+            CWAGENT
+
+            /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
+              -a fetch-config \
+              -m ec2 \
+              -s \
+              -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
+
+            echo "=== UserData bootstrap complete ==="
+
+  # -------------------------------------------------------------------------
+  # Auto Scaling Group — maintains exactly one instance
+  # -------------------------------------------------------------------------
+  KafkaAutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: !Sub "opensearch-migration-kafka-asg-${AWS::StackName}"
+      MinSize: "1"
+      MaxSize: "1"
+      DesiredCapacity: "1"
+      VPCZoneIdentifier:
+        - !Ref SubnetId
+      LaunchTemplate:
+        LaunchTemplateId: !Ref KafkaLaunchTemplate
+        Version: !GetAtt KafkaLaunchTemplate.LatestVersionNumber
+      HealthCheckType: EC2
+      HealthCheckGracePeriod: 600
+      Tags:
+        - Key: Name
+          Value: opensearch-migration-kafka
+          PropagateAtLaunch: true
+        - Key: MigrationType
+          Value: kafka
+          PropagateAtLaunch: true
+
+# ---------------------------------------------------------------------------
+# Outputs
+# ---------------------------------------------------------------------------
+Outputs:
+
+  CloudWatchLogGroup:
+    Description: CloudWatch log group for Kafka Connect logs
+    Value: /migration/kafka
+
+  KafkaConnectEndpoint:
+    Description: >
+      Kafka Connect REST API endpoint. Replace <instance-private-ip> with the
+      private IP of the EC2 instance launched by the Auto Scaling group. Use
+      SSM Session Manager port-forwarding or a bastion host to reach it.
+    Value: !Sub "http://<instance-private-ip>:8083"
+
+  MonitorCommand:
+    Description: AWS CLI command to tail Kafka Connect logs in real time
+    Value: !Sub "aws logs tail /migration/kafka --follow --region ${AWS::Region}"

@@ -13,13 +13,12 @@ import {
 } from "@elastic/eui";
 import { ElasticMark, OpenSearchMark, MigrationArrow } from "./Logo";
 
-type Page = "source" | "target" | "method" | "proxy_deploy" | "indices" | "execute";
-
 interface AppLayoutProps {
   activePage: string;
   onNavigate: (page: string) => void;
   children: React.ReactNode;
-  isVpcProxyMode: boolean;
+  showProxyStep: boolean;   // true only for remote_reindex + isVpcProxy
+  isVpcProxyMode: boolean;  // true for any isVpcProxy
   sourceConnected: boolean;
   targetConnected: boolean;
   methodSelected: boolean;
@@ -27,23 +26,23 @@ interface AppLayoutProps {
   indicesSelected: boolean;
 }
 
-/** Steps for standard (non-VPC) flow */
-const STANDARD_STEPS = [
-  { id: "source",  title: "Source"  },
-  { id: "target",  title: "Target"  },
-  { id: "method",  title: "Method"  },
-  { id: "indices", title: "Indices" },
-  { id: "execute", title: "Execute" },
-] as const;
-
-/** Steps for VPC proxy flow — adds Deploy Proxy between Method and Indices */
-const VPC_STEPS = [
+/** Steps when proxy_deploy step is needed (remote_reindex + isVpcProxy) */
+const WITH_PROXY_STEPS = [
   { id: "source",       title: "Source"       },
   { id: "target",       title: "Target"       },
   { id: "method",       title: "Method"       },
   { id: "proxy_deploy", title: "Deploy Proxy" },
   { id: "indices",      title: "Indices"      },
   { id: "execute",      title: "Execute"      },
+] as const;
+
+/** Standard 5-step flow */
+const STANDARD_STEPS = [
+  { id: "source",  title: "Source"  },
+  { id: "target",  title: "Target"  },
+  { id: "method",  title: "Method"  },
+  { id: "indices", title: "Indices" },
+  { id: "execute", title: "Execute" },
 ] as const;
 
 type StepCompletion = {
@@ -58,6 +57,7 @@ export function AppLayout({
   activePage,
   onNavigate,
   children,
+  showProxyStep,
   isVpcProxyMode,
   sourceConnected,
   targetConnected,
@@ -65,7 +65,7 @@ export function AppLayout({
   proxyDeployed,
   indicesSelected,
 }: AppLayoutProps) {
-  const steps = isVpcProxyMode ? VPC_STEPS : STANDARD_STEPS;
+  const steps = showProxyStep ? WITH_PROXY_STEPS : STANDARD_STEPS;
   const stepIds = steps.map((s) => s.id as string);
   const activeStepIdx = stepIds.indexOf(activePage);
 

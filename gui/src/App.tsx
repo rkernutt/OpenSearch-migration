@@ -6,13 +6,13 @@ import { MethodPage } from "./pages/MethodPage";
 import { ProxyDeployPage } from "./pages/ProxyDeployPage";
 import { IndicesPage } from "./pages/IndicesPage";
 import { ExecutePage } from "./pages/ExecutePage";
+import type { TargetType } from "./pages/TargetPage";
 import type { MigrationMethod } from "./pages/MethodPage";
 import type { IndexInfo } from "./pages/IndicesPage";
 import type { ProxyStatus } from "./pages/ProxyDeployPage";
 
 type Page = "source" | "target" | "method" | "proxy_deploy" | "indices" | "execute";
 type AuthType = "iam" | "basic";
-type TargetType = "cloud" | "self_managed";
 type ConnectionStatus = "idle" | "testing" | "ok" | "fail";
 
 export default function App() {
@@ -28,7 +28,7 @@ export default function App() {
   const [sourceMsg, setSourceMsg] = useState("");
 
   // ── Target state ─────────────────────────────────────────────────────────
-  const [targetType, setTargetType] = useState<TargetType>("cloud");
+  const [targetType, setTargetType] = useState<TargetType>("cloud_hosted");
   const [targetUrl, setTargetUrl] = useState("");
   const [targetApiKey, setTargetApiKey] = useState("");
   const [targetStatus, setTargetStatus] = useState<ConnectionStatus>("idle");
@@ -36,8 +36,9 @@ export default function App() {
 
   // ── Method state ─────────────────────────────────────────────────────────
   const [migrationMethod, setMigrationMethod] = useState<MigrationMethod>("remote_reindex");
+  const [isVpcProxy, setIsVpcProxy] = useState(false);
 
-  // ── Phase 2: VPC Proxy state ─────────────────────────────────────────────
+  // ── VPC Proxy / Deploy state ─────────────────────────────────────────────
   const [vpcId, setVpcId] = useState("");
   const [subnetId, setSubnetId] = useState("");
   const [allowedCidr, setAllowedCidr] = useState("10.0.0.0/8");
@@ -55,22 +56,34 @@ export default function App() {
   const [batchSize, setBatchSize] = useState(1000);
   const [slices, setSlices] = useState("auto");
 
-  // ── Helpers ───────────────────────────────────────────────────────────────
+  // ── Routing helpers ───────────────────────────────────────────────────────
 
-  const isVpcProxyMode = migrationMethod === "vpc_proxy";
+  /** true only when we need the proxy_deploy step in the wizard */
+  const showProxyStep = isVpcProxy && migrationMethod === "remote_reindex";
+
+  function resetProxyState() {
+    setProxyStatus("idle");
+    setProxyEndpoint("");
+    setProxyTestMsg("");
+  }
 
   function handleMethodChange(m: MigrationMethod) {
     setMigrationMethod(m);
-    // Reset proxy state if switching away from vpc_proxy
-    if (m !== "vpc_proxy") {
-      setProxyStatus("idle");
-      setProxyEndpoint("");
-      setProxyTestMsg("");
+    // Switching away from remote_reindex clears proxy deploy state
+    if (m !== "remote_reindex") {
+      resetProxyState();
+    }
+  }
+
+  function handleVpcProxyChange(v: boolean) {
+    setIsVpcProxy(v);
+    if (!v) {
+      resetProxyState();
     }
   }
 
   function handleMethodNext() {
-    if (migrationMethod === "vpc_proxy") {
+    if (isVpcProxy && migrationMethod === "remote_reindex") {
       setPage("proxy_deploy");
     } else {
       setPage("indices");
@@ -111,7 +124,6 @@ export default function App() {
         setSourceMsg(data.error ?? `HTTP ${resp.status}`);
       }
     } catch (e: any) {
-      // Backend proxy not running — validate URL format only
       if (e?.name === "TypeError" || e?.name === "AbortError") {
         try {
           new URL(sourceEndpoint);
@@ -166,7 +178,7 @@ export default function App() {
     }
   }
 
-  // ── Phase 2: Proxy connectivity test ─────────────────────────────────────
+  // ── Proxy connectivity test ───────────────────────────────────────────────
 
   async function handleTestProxy() {
     if (!proxyEndpoint) return;
@@ -221,10 +233,12 @@ export default function App() {
         const data = await resp.json().catch(() => ({}));
         setIndicesError(data.error ?? `HTTP ${resp.status}`);
         setAvailableIndices(SAMPLE_INDICES);
+        setSelectedIndices(SAMPLE_INDICES.map((i) => i.name));
       }
     } catch {
       setIndicesError("Could not reach source cluster via proxy server.");
       setAvailableIndices(SAMPLE_INDICES);
+      setSelectedIndices(SAMPLE_INDICES.map((i) => i.name));
     } finally {
       setIndicesLoading(false);
     }
@@ -242,7 +256,8 @@ export default function App() {
     <AppLayout
       activePage={page}
       onNavigate={(p) => setPage(p as Page)}
-      isVpcProxyMode={isVpcProxyMode}
+      showProxyStep={showProxyStep}
+      isVpcProxyMode={isVpcProxy}
       sourceConnected={sourceStatus === "ok"}
       targetConnected={targetStatus === "ok"}
       methodSelected={true}
@@ -287,7 +302,9 @@ export default function App() {
       {page === "method" && (
         <MethodPage
           method={migrationMethod}
+          isVpcProxy={isVpcProxy}
           onMethodChange={handleMethodChange}
+          onVpcProxyChange={handleVpcProxyChange}
           onBack={() => setPage("target")}
           onNext={handleMethodNext}
         />
@@ -333,7 +350,7 @@ export default function App() {
           onClearAll={() => setSelectedIndices([])}
           onBatchSizeChange={setBatchSize}
           onSlicesChange={setSlices}
-          onBack={() => setPage(isVpcProxyMode ? "proxy_deploy" : "method")}
+          onBack={() => setPage(showProxyStep ? "proxy_deploy" : "method")}
           onNext={() => setPage("execute")}
         />
       )}
@@ -347,12 +364,18 @@ export default function App() {
           sourcePassword={sourcePassword}
           targetUrl={targetUrl}
           targetApiKey={targetApiKey}
+          targetType={targetType}
           migrationMethod={migrationMethod}
+          isVpcProxy={isVpcProxy}
           proxyEndpoint={proxyEndpoint}
           selectedIndices={selectedIndices}
           availableIndices={availableIndices}
           batchSize={batchSize}
           slices={slices}
+          vpcId={vpcId}
+          subnetId={subnetId}
+          allowedCidr={allowedCidr}
+          instanceType={instanceType}
           onBack={() => setPage("indices")}
         />
       )}
@@ -362,9 +385,9 @@ export default function App() {
 
 // Sample indices shown when proxy server is unavailable
 const SAMPLE_INDICES: IndexInfo[] = [
-  { name: "logs-app-2024",    docCount: 4_820_000,  sizeBytes: 3_221_225_472 },
-  { name: "logs-app-2023",    docCount: 12_100_000, sizeBytes: 8_589_934_592 },
-  { name: "metrics-system",   docCount: 920_000,    sizeBytes: 524_288_000  },
-  { name: "apm-traces",       docCount: 2_400_000,  sizeBytes: 2_147_483_648 },
-  { name: "security-events",  docCount: 380_000,    sizeBytes: 268_435_456  },
+  { name: "logs-app-2024",   docCount: 4_820_000,  sizeBytes: 3_221_225_472 },
+  { name: "logs-app-2023",   docCount: 12_100_000, sizeBytes: 8_589_934_592 },
+  { name: "metrics-system",  docCount: 920_000,    sizeBytes: 524_288_000  },
+  { name: "apm-traces",      docCount: 2_400_000,  sizeBytes: 2_147_483_648 },
+  { name: "security-events", docCount: 380_000,    sizeBytes: 268_435_456  },
 ];

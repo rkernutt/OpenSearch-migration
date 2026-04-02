@@ -1,0 +1,607 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: "OpenSearch to Elastic Migration — Logstash on EC2 via Chef (VPC mode)"
+
+# ---------------------------------------------------------------------------
+# Parameter grouping for the CloudFormation console
+# ---------------------------------------------------------------------------
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: "Source OpenSearch"
+        Parameters:
+          - OpenSearchEndpoint
+          - OpenSearchAuthType
+          - OpenSearchUsername
+          - OpenSearchPassword
+      - Label:
+          default: "Target Elastic"
+        Parameters:
+          - ElasticEndpoint
+          - ElasticApiKeyParam
+      - Label:
+          default: "Migration Settings"
+        Parameters:
+          - IndicesToMigrate
+          - BatchSize
+      - Label:
+          default: "Infrastructure"
+        Parameters:
+          - VpcId
+          - SubnetId
+          - InstanceType
+          - AllowedCidr
+          - KeyPairName
+    ParameterLabels:
+      OpenSearchEndpoint:
+        default: "OpenSearch Endpoint URL"
+      OpenSearchAuthType:
+        default: "OpenSearch Auth Type"
+      OpenSearchUsername:
+        default: "OpenSearch Username (basic auth)"
+      OpenSearchPassword:
+        default: "OpenSearch Password (basic auth)"
+      ElasticEndpoint:
+        default: "Elastic Cloud Endpoint URL"
+      ElasticApiKeyParam:
+        default: "Elastic API Key (Base64-encoded)"
+      IndicesToMigrate:
+        default: "Indices to Migrate (comma-separated)"
+      BatchSize:
+        default: "Scroll Batch Size"
+      VpcId:
+        default: "VPC ID"
+      SubnetId:
+        default: "Private Subnet ID"
+      InstanceType:
+        default: "EC2 Instance Type"
+      AllowedCidr:
+        default: "Allowed CIDR (inbound)"
+      KeyPairName:
+        default: "EC2 Key Pair Name (optional)"
+
+# ---------------------------------------------------------------------------
+# Parameters
+# ---------------------------------------------------------------------------
+Parameters:
+
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC to deploy into.
+
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: >
+      Private subnet for the Logstash EC2 instance. The subnet must have
+      outbound internet access via a NAT gateway so Logstash can reach both
+      the OpenSearch cluster and Elastic Cloud.
+
+  OpenSearchEndpoint:
+    Type: String
+    Description: >
+      Full URL of the source Amazon OpenSearch Service domain.
+      Example: https://search-my-domain-xxx.us-east-1.es.amazonaws.com
+
+  OpenSearchAuthType:
+    Type: String
+    Default: basic
+    AllowedValues:
+      - iam
+      - basic
+    Description: >
+      Authentication method for the source OpenSearch cluster.
+      Use "basic" for username/password, "iam" for AWS Signature V4 (SigV4).
+
+  OpenSearchUsername:
+    Type: String
+    Default: ""
+    Description: Username for OpenSearch basic auth. Leave empty when using IAM auth.
+
+  OpenSearchPassword:
+    Type: String
+    Default: ""
+    NoEcho: true
+    Description: Password for OpenSearch basic auth. Leave empty when using IAM auth.
+
+  ElasticEndpoint:
+    Type: String
+    Description: >
+      Full Elasticsearch URL of the Elastic Cloud target including scheme and port.
+      Example: https://my-deployment.es.us-east-1.aws.elastic-cloud.com:9243
+
+  ElasticApiKeyParam:
+    Type: String
+    NoEcho: true
+    Description: >
+      Base64-encoded Elasticsearch API key for the Elastic Cloud target.
+      Format: base64("<id>:<api_key>")
+
+  IndicesToMigrate:
+    Type: String
+    Description: Comma-separated list of index names to migrate. Example: logs-2024,metrics-2024
+
+  BatchSize:
+    Type: Number
+    Default: 1000
+    MinValue: 100
+    MaxValue: 10000
+    Description: Number of documents per Logstash scroll page (affects memory usage).
+
+  InstanceType:
+    Type: String
+    Default: t3.medium
+    AllowedValues:
+      - t3.medium
+      - t3.large
+      - t3.xlarge
+      - m5.large
+      - m5.xlarge
+      - m5.2xlarge
+      - r5.large
+      - r5.xlarge
+    Description: >
+      EC2 instance type. Logstash requires at least 2 GB RAM; t3.medium is the
+      minimum recommended.
+
+  AllowedCidr:
+    Type: String
+    Default: 10.0.0.0/8
+    AllowedPattern: "^(\\d{1,3}\\.){3}\\d{1,3}/\\d{1,2}$"
+    ConstraintDescription: Must be a valid CIDR block.
+    Description: CIDR range allowed to reach the Logstash API port (TCP 9600).
+
+  KeyPairName:
+    Type: String
+    Default: ""
+    Description: >
+      Optional EC2 key pair name for SSH access. Leave empty to disable SSH.
+      The security group does not open port 22; use SSM Session Manager instead.
+
+# ---------------------------------------------------------------------------
+# Conditions
+# ---------------------------------------------------------------------------
+Conditions:
+  HasKeyPair: !Not [!Equals [!Ref KeyPairName, ""]]
+
+# ---------------------------------------------------------------------------
+# Resources
+# ---------------------------------------------------------------------------
+Resources:
+
+  # -------------------------------------------------------------------------
+  # Security Group
+  # -------------------------------------------------------------------------
+  LogstashSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Logstash migration pipeline — allows Logstash API from AllowedCidr
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 9600
+          ToPort: 9600
+          CidrIp: !Ref AllowedCidr
+          Description: Logstash monitoring API
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+          Description: >
+            All outbound traffic — required for NAT gateway access to
+            OpenSearch endpoint and Elastic Cloud.
+      Tags:
+        - Key: Name
+          Value: opensearch-migration-logstash-sg
+        - Key: MigrationType
+          Value: logstash
+
+  # -------------------------------------------------------------------------
+  # IAM Role + Instance Profile
+  # -------------------------------------------------------------------------
+  LogstashInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "opensearch-migration-logstash-role-${AWS::StackName}"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        # SSM Session Manager and patch management
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        # CloudWatch agent metrics and logs
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+        # Read SSM parameters (retrieve API key at runtime if needed)
+        - arn:aws:iam::aws:policy/AmazonSSMReadOnlyAccess
+      Policies:
+        - PolicyName: LogstashCloudWatchMetrics
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cloudwatch:PutMetricData
+                Resource: "*"
+      Tags:
+        - Key: Name
+          Value: opensearch-migration-logstash-role
+
+  LogstashInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub "opensearch-migration-logstash-profile-${AWS::StackName}"
+      Roles:
+        - !Ref LogstashInstanceRole
+
+  # -------------------------------------------------------------------------
+  # SSM Parameter — Elastic API Key
+  #
+  # NOTE: AWS CloudFormation does NOT support creating SSM SecureString
+  # parameters directly via AWS::SSM::Parameter. The Type must be "String".
+  # The value is passed via the NoEcho parameter ElasticApiKeyParam so it is
+  # not displayed in the console, but it is stored as plaintext in SSM.
+  # For higher security, create a SecureString parameter manually or via the
+  # AWS CLI before stack creation and reference it with
+  # "{{resolve:ssm-secure:/migration/elastic-api-key}}".
+  # -------------------------------------------------------------------------
+  ElasticApiKeySsmParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /migration/elastic-api-key
+      Type: String          # CFN cannot create SecureString — see note above
+      Value: !Ref ElasticApiKeyParam
+      Description: >
+        Base64-encoded Elastic Cloud API key used by the Logstash migration
+        pipeline. Created by CloudFormation stack.
+      Tier: Standard
+      Tags:
+        MigrationType: logstash
+        StackName: !Ref AWS::StackName
+
+  # -------------------------------------------------------------------------
+  # EC2 Launch Template
+  # -------------------------------------------------------------------------
+  LogstashLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub "opensearch-migration-logstash-lt-${AWS::StackName}"
+      LaunchTemplateData:
+        # Resolve the latest Amazon Linux 2023 AMI from the SSM public parameter
+        ImageId: !Sub "{{resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64}}"
+        InstanceType: !Ref InstanceType
+        KeyName: !If [HasKeyPair, !Ref KeyPairName, !Ref AWS::NoValue]
+        IamInstanceProfile:
+          Arn: !GetAtt LogstashInstanceProfile.Arn
+        SecurityGroupIds:
+          - !Ref LogstashSecurityGroup
+        # Enforce IMDSv2 (require session-oriented metadata requests)
+        MetadataOptions:
+          HttpTokens: required
+          HttpEndpoint: enabled
+          HttpPutResponseHopLimit: 1
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: opensearch-migration-logstash
+              - Key: MigrationType
+                Value: logstash
+          - ResourceType: volume
+            Tags:
+              - Key: Name
+                Value: opensearch-migration-logstash
+        UserData:
+          Fn::Base64:
+            !Sub |
+              #!/bin/bash
+              # ---------------------------------------------------------------
+              # Logstash Migration — UserData bootstrap
+              # All output is mirrored to /var/log/user-data.log and the
+              # instance console so it is visible in CloudWatch and the EC2
+              # console's "Get system log" view.
+              # ---------------------------------------------------------------
+              set -ex
+              exec > >(tee /var/log/user-data.log | logger -t user-data -s 2>/dev/console) 2>&1
+
+              echo "=== [1/11] Installing system packages ==="
+              dnf install -y java-11-amazon-corretto ruby wget
+
+              echo "=== [2/11] Installing Chef Solo 18 via Omnitruck ==="
+              curl -L https://omnitruck.chef.io/install.sh | bash -s -- -v 18
+
+              echo "=== [3/11] Creating cookbook directory structure ==="
+              mkdir -p /var/chef/cookbooks/logstash_migration/recipes
+              mkdir -p /var/chef/cookbooks/logstash_migration/templates/default
+              mkdir -p /var/log/chef
+
+              echo "=== [4/11] Writing cookbook metadata ==="
+              cat > /var/chef/cookbooks/logstash_migration/metadata.rb << 'METADATA'
+              name 'logstash_migration'
+              version '1.0.0'
+              METADATA
+
+              echo "=== [5/11] Writing Chef recipe ==="
+              cat > /var/chef/cookbooks/logstash_migration/recipes/default.rb << 'CHEFRECIPE'
+              # logstash_migration::default
+              # Installs Logstash 8.17.0, writes pipeline config from template,
+              # enables the service and emits a CloudWatch migration-started metric.
+
+              LOGSTASH_VERSION = '8.17.0'.freeze
+              LOGSTASH_RPM_URL = "https://artifacts.elastic.co/downloads/logstash/logstash-#{LOGSTASH_VERSION}-x86_64.rpm".freeze
+
+              # ---- 1. Download and install Logstash RPM ----------------------
+              remote_file "/tmp/logstash-#{LOGSTASH_VERSION}.rpm" do
+                source LOGSTASH_RPM_URL
+                action :create_if_missing
+                retries 3
+                retry_delay 10
+              end
+
+              rpm_package "logstash-#{LOGSTASH_VERSION}" do
+                source "/tmp/logstash-#{LOGSTASH_VERSION}.rpm"
+                action :install
+              end
+
+              # ---- 2. Ensure config directory exists -------------------------
+              directory '/etc/logstash/conf.d' do
+                owner 'root'
+                group 'root'
+                mode  '0755'
+                recursive true
+                action :create
+              end
+
+              # ---- 3. Write pipeline configuration from template -------------
+              template '/etc/logstash/conf.d/migration.conf' do
+                source 'logstash.conf.erb'
+                owner  'root'
+                group  'root'
+                mode   '0644'
+                variables(
+                  opensearch_host: node['migration']['opensearch_host'],
+                  auth_type:       node['migration']['auth_type'],
+                  username:        node['migration']['username'],
+                  password:        node['migration']['password'],
+                  elastic_host:    node['migration']['elastic_host'],
+                  api_key:         node['migration']['api_key'],
+                  indices:         node['migration']['indices'],
+                  batch_size:      node['migration']['batch_size']
+                )
+                notifies :restart, 'service[logstash]', :delayed
+              end
+
+              # ---- 4. Write JVM options (1g heap for t3.medium) --------------
+              template '/etc/logstash/jvm.options' do
+                source 'logstash-jvm.options.erb'
+                owner  'root'
+                group  'root'
+                mode   '0644'
+                notifies :restart, 'service[logstash]', :delayed
+              end
+
+              # ---- 5. Enable and start Logstash service ----------------------
+              service 'logstash' do
+                action [:enable, :start]
+              end
+
+              # ---- 6. Emit CloudWatch custom metric: MigrationStarted --------
+              execute 'cloudwatch-migration-started-metric' do
+                command <<~SH
+                  aws cloudwatch put-metric-data \
+                    --namespace "Migration/Logstash" \
+                    --metric-name "MigrationStarted" \
+                    --value 1 \
+                    --unit Count \
+                    --region "$(TOKEN=$(curl -s -X PUT http://169.254.169.254/latest/api/token -H 'X-aws-ec2-metadata-token-ttl-seconds: 21600') && curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/region)"
+                SH
+                retries 3
+                retry_delay 5
+              end
+              CHEFRECIPE
+
+              echo "=== [6/11] Writing logstash.conf.erb template ==="
+              cat > /var/chef/cookbooks/logstash_migration/templates/default/logstash.conf.erb << 'LSCONF'
+              input {
+                elasticsearch {
+                  hosts => ["<%= @opensearch_host %>"]
+              <% if @auth_type == "basic" %>
+                  user => "<%= @username %>"
+                  password => "<%= @password %>"
+              <% end %>
+                  index => "<%= @indices %>"
+                  query => '{ "query": { "match_all": {} } }'
+                  size => <%= @batch_size %>
+                  scroll => "5m"
+                  docinfo => true
+                  docinfo_target => "[@metadata][doc]"
+                }
+              }
+
+              filter {
+                mutate {
+                  add_field => {
+                    "[@metadata][_index]" => "%{[@metadata][doc][_index]}"
+                    "[@metadata][_id]"    => "%{[@metadata][doc][_id]}"
+                  }
+                  remove_field => ["@version", "@timestamp"]
+                }
+              }
+
+              output {
+                elasticsearch {
+                  hosts => ["<%= @elastic_host %>"]
+                  api_key => "<%= @api_key %>"
+                  index => "%{[@metadata][_index]}"
+                  document_id => "%{[@metadata][_id]}"
+                  action => "index"
+                }
+              }
+              LSCONF
+
+              echo "=== [7/11] Writing logstash-jvm.options.erb template ==="
+              cat > /var/chef/cookbooks/logstash_migration/templates/default/logstash-jvm.options.erb << 'JVMOPTS'
+              ## JVM options for Logstash migration pipeline
+              ## 1g heap is appropriate for t3.medium (2 GB RAM).
+              ## Increase -Xmx on larger instance types.
+              -Xms1g
+              -Xmx1g
+              -XX:+UseG1GC
+              -Djava.awt.headless=true
+              -Dfile.encoding=UTF-8
+              -Djruby.compile.invokedynamic=true
+              JVMOPTS
+
+              echo "=== [8/11] Writing node.json with migration attributes ==="
+              # Retrieve sensitive values from SSM at boot time so they are
+              # never stored in the CloudFormation template in plaintext.
+              ELASTIC_API_KEY_VALUE=$(aws ssm get-parameter \
+                --name "/migration/elastic-api-key" \
+                --query "Parameter.Value" \
+                --output text \
+                --region "$(TOKEN=$(curl -s -X PUT http://169.254.169.254/latest/api/token -H 'X-aws-ec2-metadata-token-ttl-seconds: 21600') && curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/region)")
+
+              cat > /var/chef/node.json << NODEJSON
+              {
+                "migration": {
+                  "opensearch_host": "${OpenSearchEndpoint}",
+                  "auth_type":       "${OpenSearchAuthType}",
+                  "username":        "${OpenSearchUsername}",
+                  "password":        "${OpenSearchPassword}",
+                  "elastic_host":    "${ElasticEndpoint}",
+                  "api_key":         "$ELASTIC_API_KEY_VALUE",
+                  "indices":         "${IndicesToMigrate}",
+                  "batch_size":      ${BatchSize}
+                },
+                "run_list": ["recipe[logstash_migration]"]
+              }
+              NODEJSON
+
+              echo "=== [9/11] Writing Chef Solo config ==="
+              cat > /var/chef/solo.rb << 'SOLORB'
+              cookbook_path ["/var/chef/cookbooks"]
+              log_level      :info
+              log_location   "/var/log/chef/client.log"
+              SOLORB
+
+              echo "=== [10/11] Running Chef Solo ==="
+              chef-solo -c /var/chef/solo.rb -j /var/chef/node.json
+
+              echo "=== [11/11] Installing and configuring CloudWatch agent ==="
+              dnf install -y amazon-cloudwatch-agent
+
+              cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json << 'CWAGENT'
+              {
+                "agent": {
+                  "run_as_user": "root"
+                },
+                "logs": {
+                  "logs_collected": {
+                    "files": {
+                      "collect_list": [
+                        {
+                          "file_path": "/var/log/logstash/logstash-plain.log",
+                          "log_group_name": "/migration/logstash",
+                          "log_stream_name": "{instance_id}/logstash-plain",
+                          "timezone": "UTC",
+                          "timestamp_format": "[%Y-%m-%dT%H:%M:%S,%f]"
+                        },
+                        {
+                          "file_path": "/var/log/user-data.log",
+                          "log_group_name": "/migration/user-data",
+                          "log_stream_name": "{instance_id}/user-data",
+                          "timezone": "UTC"
+                        },
+                        {
+                          "file_path": "/var/log/chef/client.log",
+                          "log_group_name": "/migration/chef",
+                          "log_stream_name": "{instance_id}/chef-client",
+                          "timezone": "UTC"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+              CWAGENT
+
+              /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
+                -a fetch-config \
+                -m ec2 \
+                -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json \
+                -s
+
+              systemctl enable amazon-cloudwatch-agent
+              systemctl start  amazon-cloudwatch-agent
+
+              echo "=== Bootstrap complete — Logstash migration pipeline is running ==="
+
+  # -------------------------------------------------------------------------
+  # Auto Scaling Group (single instance — kept in ASG for self-healing)
+  # -------------------------------------------------------------------------
+  LogstashAutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: !Sub "opensearch-migration-logstash-asg-${AWS::StackName}"
+      MinSize: "1"
+      DesiredCapacity: "1"
+      MaxSize: "1"
+      VPCZoneIdentifier:
+        - !Ref SubnetId
+      LaunchTemplate:
+        LaunchTemplateId: !Ref LogstashLaunchTemplate
+        Version: !GetAtt LogstashLaunchTemplate.LatestVersionNumber
+      HealthCheckType: EC2
+      HealthCheckGracePeriod: 600
+      Tags:
+        - Key: Name
+          Value: opensearch-migration-logstash
+          PropagateAtLaunch: true
+        - Key: MigrationType
+          Value: logstash
+          PropagateAtLaunch: true
+    UpdatePolicy:
+      AutoScalingReplacingUpdate:
+        WillReplace: true
+
+# ---------------------------------------------------------------------------
+# Outputs
+# ---------------------------------------------------------------------------
+Outputs:
+
+  AutoScalingGroupName:
+    Description: >
+      Auto Scaling Group name. Run the MonitorCommand below or use
+      "aws autoscaling describe-auto-scaling-groups" to find the instance ID.
+    Value: !Ref LogstashAutoScalingGroup
+    Export:
+      Name: !Sub "${AWS::StackName}-ASGName"
+
+  CloudWatchLogGroup:
+    Description: CloudWatch Log Group for Logstash pipeline output.
+    Value: /migration/logstash
+    Export:
+      Name: !Sub "${AWS::StackName}-LogGroup"
+
+  SSMParameterName:
+    Description: SSM Parameter storing the Elastic Cloud API key.
+    Value: /migration/elastic-api-key
+    Export:
+      Name: !Sub "${AWS::StackName}-SSMParam"
+
+  MonitorCommand:
+    Description: >
+      Run this command to tail Logstash logs in real time (requires AWS CLI
+      with sufficient CloudWatch Logs permissions).
+    Value: !Sub "aws logs tail /migration/logstash --follow --region ${AWS::Region}"
+
+  UserDataLogCommand:
+    Description: Run this to watch the bootstrap log in real time.
+    Value: !Sub "aws logs tail /migration/user-data --follow --region ${AWS::Region}"
+
+  ChefLogCommand:
+    Description: Run this to watch the Chef Solo run log.
+    Value: !Sub "aws logs tail /migration/chef --follow --region ${AWS::Region}"
