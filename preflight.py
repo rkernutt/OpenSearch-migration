@@ -29,7 +29,7 @@ def main() -> None:
 
     bootstrap_env.load()
 
-    from validate_migration import DestAuth, opensearch_auth_sigv4
+    from validate_migration import DestAuth, opensearch_auth_sigv4, _SESSION, _TIMEOUT_SHORT, _redact_response_text
 
     parser = argparse.ArgumentParser(
         description="Preflight: ping OpenSearch + Elastic; optional index HEAD and optional count equality."
@@ -143,15 +143,15 @@ def main() -> None:
         url = args.source_host.rstrip("/") + path
         if use_sigv4:
             auth = opensearch_auth_sigv4(args.source_region)
-            return requests.get(url, auth=auth, timeout=30, **kwargs)
-        return requests.get(
-            url, auth=(args.source_user, args.source_password), timeout=30, **kwargs
+            return _SESSION.get(url, auth=auth, timeout=_TIMEOUT_SHORT, **kwargs)
+        return _SESSION.get(
+            url, auth=(args.source_user, args.source_password), timeout=_TIMEOUT_SHORT, **kwargs
         )
 
     def get_es(path: str) -> requests.Response:
         url = args.dest_host.rstrip("/") + path
         headers, auth = dest_auth.apply()
-        return requests.get(url, headers=headers, auth=auth, timeout=30)
+        return _SESSION.get(url, headers=headers, auth=auth, timeout=_TIMEOUT_SHORT)
 
     try:
         r_os = get_os("/")
@@ -166,20 +166,20 @@ def main() -> None:
             url = args.source_host.rstrip("/") + "/" + args.source_index
             if use_sigv4:
                 auth = opensearch_auth_sigv4(args.source_region)
-                h = requests.head(url, auth=auth, timeout=30)
+                h = _SESSION.head(url, auth=auth, timeout=_TIMEOUT_SHORT)
             else:
-                h = requests.head(url, auth=(args.source_user, args.source_password), timeout=30)
+                h = _SESSION.head(url, auth=(args.source_user, args.source_password), timeout=_TIMEOUT_SHORT)
             if h.status_code == 404:
-                fail(f"source index missing: {args.source_index}")
+                fail(f"source index '{args.source_index}' not found on {args.source_host}")
             h.raise_for_status()
             rows.append(f"OpenSearch index exists: {args.source_index}")
 
         if args.dest_index:
             url = args.dest_host.rstrip("/") + "/" + args.dest_index
             headers, auth = dest_auth.apply()
-            h = requests.head(url, headers=headers, auth=auth, timeout=30)
+            h = _SESSION.head(url, headers=headers, auth=auth, timeout=_TIMEOUT_SHORT)
             if h.status_code == 404:
-                fail(f"destination index missing: {args.dest_index}")
+                fail(f"destination index '{args.dest_index}' not found on {args.dest_host}")
             h.raise_for_status()
             rows.append(f"Elasticsearch index exists: {args.dest_index}")
 
@@ -206,7 +206,7 @@ def main() -> None:
     except requests.RequestException as e:
         msg = str(e)
         if hasattr(e, "response") and e.response is not None:
-            msg += f" — {e.response.text[:300]}"
+            msg += f" — {_redact_response_text(e.response.text[:300])}"
         fail(msg, transport=True)
 
     ok_result(rows)

@@ -14,8 +14,23 @@ All configuration is via environment variables (or a repo-root `.env` file if yo
 | `PROXY_USER` | No | If set (with `PROXY_PASSWORD`), incoming requests must include `Authorization: Basic ...`. Use when the proxy is exposed publicly (e.g. behind an ALB for Elastic Cloud). |
 | `PROXY_PASSWORD` | No | Basic auth password for the proxy. |
 | `PROXY_MAX_BODY_MB` | No | Max request body size in MB (default: `100`). Larger bulk payloads may require raising this; very high values increase memory risk. |
+| `PROXY_VERIFY_TLS` | No | Set to `false` to disable TLS verification of the OpenSearch endpoint (not recommended in production). Set `PROXY_CA_BUNDLE` instead for custom CA certificates. |
+| `PROXY_CA_BUNDLE` | No | Path to a CA bundle file (PEM) for verifying the OpenSearch endpoint TLS certificate (e.g. self-signed or private CA). |
+| `PROXY_DEBUG` | No | Set to `1` to log `METHOD /path → status (Xms)` on stderr. Bodies are never logged. |
 
-**IAM:** The proxy uses the same credentials as the rest of the repo (instance role, task role, or env). The role must allow calling the OpenSearch API (e.g. `es:ESHttpGet`, `es:ESHttpPost`, `es:ESHttpPut`, `es:ESHttpHead` on the domain resource).
+**IAM:** The proxy uses the same credentials as the rest of the repo (instance role, task role, or env). The role must allow calling the OpenSearch API (e.g. `es:ESHttpGet`, `es:ESHttpPost`, `es:ESHttpPut`, `es:ESHttpHead` on the domain resource). For a **read-only** validation role, only `es:ESHttpGet`, `es:ESHttpHead`, and `es:ESHttpPost` are required.
+
+### Forwarded headers
+
+The proxy forwards a **fixed whitelist** of headers to OpenSearch and back to the client. This prevents credential leakage via forwarded `Authorization` headers (the proxy provides its own SigV4 auth) while preserving content negotiation.
+
+**Client → OpenSearch (request):** `content-type`, `accept`, `accept-encoding`
+
+**OpenSearch → client (response):** `content-type`, `content-length`, `accept-ranges`
+
+The proxy intentionally **drops** incoming `Authorization` and `Cookie` headers from clients — the SigV4 signature it generates replaces them. If a client sends `Authorization: Basic ...` to use proxy basic auth, that header is consumed by Flask before it reaches the forwarding layer.
+
+**Health check:** `GET /health` returns `{"status": "ok"}` without requiring SigV4 or proxy auth. Use this for ALB target-group health checks.
 
 ## Run locally
 
@@ -64,6 +79,33 @@ For [remote reindex](https://www.elastic.co/guide/en/elasticsearch/reference/cur
 4. **Elastic Cloud:** In deployment user settings, set `reindex.remote.whitelist: ["<alb-dns-name>:443"]`. In Dev Tools, run a reindex request with `source.remote.host` = `https://<alb-dns-name>:443` and `source.remote.username` / `source.remote.password` = your `PROXY_USER` / `PROXY_PASSWORD`.
 
 This way Elastic Cloud talks HTTPS to the ALB, and the ALB forwards HTTP to the proxy; the proxy forwards HTTPS (SigV4) to OpenSearch.
+
+## Production deployment (Gunicorn + systemd)
+
+Flask's built-in server (`python app.py`) is suitable for local testing only. For production, use **Gunicorn**:
+
+```bash
+# Install dependencies (in a virtualenv)
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+
+# Run directly
+.venv/bin/gunicorn --workers 4 --bind 0.0.0.0:9200 --timeout 120 app:app
+```
+
+A **systemd unit file** is provided at [`opensearch-proxy.service`](opensearch-proxy.service) for host-based deployments:
+
+```bash
+sudo cp opensearch-proxy.service /etc/systemd/system/
+# Edit the unit to set OPENSEARCH_ENDPOINT and other env vars
+sudo systemctl daemon-reload
+sudo systemctl enable --now opensearch-proxy
+journalctl -u opensearch-proxy -f
+```
+
+Worker count guidance: use `2–4 × CPU cores` for this I/O-bound proxy. The default in the unit file is 4.
+
+For **container** deployments, the provided `Dockerfile` already uses Gunicorn.
 
 ## Deployment summary
 

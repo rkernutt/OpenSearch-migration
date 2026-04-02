@@ -1,0 +1,55 @@
+# systemd unit for the OpenSearch SigV4 proxy (non-Docker deployment).
+#
+# Install:
+#   sudo cp opensearch-proxy.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now opensearch-proxy
+#
+# Logs:
+#   journalctl -u opensearch-proxy -f
+
+[Unit]
+Description=OpenSearch SigV4 reverse proxy
+After=network.target
+
+[Service]
+Type=simple
+User=opensearch-proxy
+WorkingDirectory=/opt/opensearch-proxy
+
+# --- Required ---
+Environment="OPENSEARCH_ENDPOINT=https://vpc-your-domain-xxx.region.es.amazonaws.com"
+Environment="AWS_REGION=us-east-1"
+
+# --- Optional: basic auth for inbound requests ---
+# Environment="PROXY_USER=proxyuser"
+# Environment="PROXY_PASSWORD=changeme"
+
+# --- Optional: TLS tuning ---
+# Environment="PROXY_VERIFY_TLS=true"
+# Environment="PROXY_CA_BUNDLE=/etc/ssl/certs/custom-ca.pem"
+
+# --- Optional: debug request logging (no bodies) ---
+# Environment="PROXY_DEBUG=0"
+
+# Gunicorn: 4 sync workers, bind on all interfaces port 9200.
+# Adjust -w based on available CPU cores (2–4× core count is typical for I/O-bound proxies).
+ExecStart=/opt/opensearch-proxy/.venv/bin/gunicorn \
+    --workers 4 \
+    --bind 0.0.0.0:9200 \
+    --timeout 120 \
+    --access-logfile - \
+    --error-logfile - \
+    app:app
+
+Restart=on-failure
+RestartSec=5
+
+# Harden the service
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/log/opensearch-proxy
+
+[Install]
+WantedBy=multi-user.target

@@ -6,7 +6,7 @@ The **OpenSearch → Elastic Cloud** migration toolkit in this repository is **f
 - [docs/TLS_AND_CREDENTIAL_LIFECYCLE.md](docs/TLS_AND_CREDENTIAL_LIFECYCLE.md) — TLS, cert, key, and allowlist lifecycle.
 - [validate_migration.py](validate_migration.py) — sampling modes: `head`, `random`, `stratified` (slice), **`time_stratified`** (stats buckets on `--time-field`).
 
-This page records **where each area was implemented**. Policy choices (approval tiers, exact rotation dates) remain **your org’s** to finalize in internal wiki/tickets.
+This page records **where each area was implemented** and tracks open items. Policy choices (approval tiers, exact rotation dates) remain **your org’s** to finalize in internal wiki/tickets.
 
 ---
 
@@ -37,6 +37,27 @@ This page records **where each area was implemented**. Policy choices (approval 
 | Docker vs local Logstash | [docs/PACKAGING.md](docs/PACKAGING.md) |
 | Checkpointed ETL evaluation | [docs/CHECKPOINT_ETL.md](docs/CHECKPOINT_ETL.md) |
 | Semantic / vector migration | [docs/SEMANTIC_MIGRATION.md](docs/SEMANTIC_MIGRATION.md), [examples/semantic_text/](examples/semantic_text/) |
+| HTTP retry/backoff | [validate_migration.py](validate_migration.py), [preflight.py](preflight.py), [poll_reindex_task.py](poll_reindex_task.py) — `_make_session()` with `urllib3` retry on 429/500/502/503/504 |
+| Configurable timeouts | [validate_migration.py](validate_migration.py) — `VALIDATION_TIMEOUT_SHORT` / `VALIDATION_TIMEOUT_SEARCH` env vars |
+| Proxy hardening | [Proxy/app.py](Proxy/app.py) — `None` credential guard, `PROXY_VERIFY_TLS` / `PROXY_CA_BUNDLE`, `PROXY_DEBUG` logging, `/health` endpoint |
+| Proxy API key encoding | [validate_migration.py](validate_migration.py), [poll_reindex_task.py](poll_reindex_task.py) — `--dest-api-key-encoded` flag; heuristic documented |
+| Time-stratified empty buckets | [validate_migration.py](validate_migration.py) — empty bucket count included in output note |
+| Preflight error detail | [preflight.py](preflight.py) — missing-index errors now include hostname |
+| GUI frontend tooling | [gui/](gui/) — ESLint (`eslint.config.js`) and Prettier (`.prettierrc`) configured; `npm run lint`, `npm run format`, `npm run format:check`; [gui/README.md](gui/README.md) added |
+| Structured logging | [validate_migration.py](validate_migration.py), [poll_reindex_task.py](poll_reindex_task.py) — `--log-format=json` emits one JSON object per stderr line |
+| Credential masking | [multi_index_reindex.py](multi_index_reindex.py) — `--mask-credentials` replaces username/password with `***`; warning printed when credentials are plain-text in stdout |
+| Index name validation | [validate_migration.py](validate_migration.py) — `validate_index_name()` rejects uppercase, invalid leading chars, and special characters before any HTTP call |
+| Error message redaction | [validate_migration.py](validate_migration.py), [preflight.py](preflight.py) — `_redact_response_text()` strips `ApiKey`/`Bearer` tokens and long Base64 strings from error bodies |
+| Credential rotation docs | [SECURITY.md](SECURITY.md) — "Credential rotation and long-running jobs" section: key lifetimes, mid-migration expiry recovery, post-cutover revocation |
+| IAM policy for validation scripts | [SECURITY.md](SECURITY.md) — separate least-privilege read-only policy (`es:ESHttpGet/Head/Post`) for `validate_migration.py` / `preflight.py` |
+| Proxy header whitelist docs | [Proxy/README.md](Proxy/README.md) — forwarded header whitelist documented with rationale; new env vars added to config table |
+| Proxy dependency upper bounds | [Proxy/requirements.txt](Proxy/requirements.txt) — upper bounds added (`flask<4`, `requests<3`, `boto3<2`, `gunicorn<24`) |
+| `__version__` | [version.py](version.py), [pyproject.toml](pyproject.toml) — `__version__ = "1.0.0"` in `version.py`; `[project]` table in `pyproject.toml` |
+| Test coverage | [tests/test_new_utilities.py](tests/test_new_utilities.py) — 20 tests covering `validate_index_name`, `_redact_response_text`, `DestAuth` encoding, `elastic_headers_auth`, and `validate_pair` early exit |
+| Production checklist | [docs/PRODUCTION_CHECKLIST.md](docs/PRODUCTION_CHECKLIST.md) — 8-section go/no-go gate: credentials, network, pilot run, destination prep, monitoring, runbook, CI, post-migration |
+| Proxy Gunicorn service | [Proxy/opensearch-proxy.service](Proxy/opensearch-proxy.service) — systemd unit file; production deployment section in [Proxy/README.md](Proxy/README.md) |
+| Logstash backpressure | [Logstash_input/README.md](Logstash_input/README.md) — "Handling backpressure and bulk rejections" with 6 tuning steps and DLQ guidance |
+| Parallel Logstash + validation | [RUNBOOK.md](RUNBOOK.md) — new section on `refresh_interval` lag, parallel workflow, and forced refresh before final validation |
 
 ---
 
@@ -47,7 +68,15 @@ pip install -r requirements-dev.txt   # or pip3
 python3 -m pytest -q
 ```
 
+For the GUI:
+
+```bash
+cd gui && npm install
+npm run lint && npm run format:check && npm run typecheck
+```
+
 Smoke and manual procedures: [docs/TESTING.md](docs/TESTING.md).
+Production go/no-go: [docs/PRODUCTION_CHECKLIST.md](docs/PRODUCTION_CHECKLIST.md).
 
 ---
 
