@@ -29,6 +29,8 @@ interface ExecutePageProps {
   targetUrl: string;
   targetApiKey: string;
   migrationMethod: MigrationMethod;
+  /** Phase 2: NLB endpoint of the deployed VPC proxy (vpc_proxy mode only) */
+  proxyEndpoint: string;
   selectedIndices: string[];
   availableIndices: IndexInfo[];
   batchSize: number;
@@ -217,12 +219,18 @@ export function ExecutePage({
   targetUrl,
   targetApiKey,
   migrationMethod,
+  proxyEndpoint,
   selectedIndices,
   availableIndices,
   batchSize,
   slices,
   onBack,
 }: ExecutePageProps) {
+  // When vpc_proxy is selected, reindex commands target the proxy NLB, not Elastic Cloud directly.
+  // The proxy forwards the traffic (including auth headers) to Elastic Cloud from within the VPC.
+  const effectiveTargetUrl = migrationMethod === "vpc_proxy" && proxyEndpoint
+    ? proxyEndpoint
+    : targetUrl;
   const [copied, setCopied] = useState<string | null>(null);
 
   function handleCopy(key: string) {
@@ -291,7 +299,7 @@ export function ExecutePage({
           </EuiText>
           <EuiSpacer size="m" />
           <EuiCodeBlock language="bash" fontSize="s" paddingSize="m" isCopyable overflowHeight={400}>
-            {genRemoteReindexCurl(sourceEndpoint, targetUrl, targetApiKey, selectedIndices, batchSize, slices)}
+            {genRemoteReindexCurl(sourceEndpoint, effectiveTargetUrl, targetApiKey, selectedIndices, batchSize, slices)}
           </EuiCodeBlock>
         </>
       ),
@@ -307,7 +315,7 @@ export function ExecutePage({
         <>
           <EuiSpacer size="m" />
           <EuiCodeBlock language="yaml" fontSize="s" paddingSize="m" isCopyable overflowHeight={300}>
-            {genLogstashDockerCompose(sourceEndpoint, sourceAuthType, sourceUsername, sourcePassword, targetUrl, targetApiKey, selectedIndices)}
+            {genLogstashDockerCompose(sourceEndpoint, sourceAuthType, sourceUsername, sourcePassword, effectiveTargetUrl, targetApiKey, selectedIndices)}
           </EuiCodeBlock>
         </>
       ),
@@ -375,7 +383,7 @@ docker compose logs -f logstash`}
           </EuiText>
           <EuiSpacer size="m" />
           <EuiCodeBlock language="json" fontSize="s" paddingSize="m" isCopyable overflowHeight={300}>
-            {genKafkaSinkConnector(targetUrl, targetApiKey, selectedIndices)}
+            {genKafkaSinkConnector(effectiveTargetUrl, targetApiKey, selectedIndices)}
           </EuiCodeBlock>
         </>
       ),
@@ -412,7 +420,13 @@ docker compose logs -f logstash`}
               <p>
                 <strong>Target</strong>
                 <br />
-                <code>{targetUrl || "—"}</code>
+                <code>{effectiveTargetUrl || "—"}</code>
+                {migrationMethod === "vpc_proxy" && proxyEndpoint && (
+                  <>
+                    <br />
+                    <EuiBadge color="warning" style={{ marginTop: 4 }}>via VPC Proxy</EuiBadge>
+                  </>
+                )}
               </p>
             </EuiText>
           </EuiFlexItem>
@@ -448,51 +462,41 @@ docker compose logs -f logstash`}
 
       <EuiSpacer size="l" />
 
-      {/* VPC Proxy Phase 2 notice */}
+      {/* VPC Proxy Phase 2 — show proxy status and reindex heading */}
       {migrationMethod === "vpc_proxy" && (
         <>
-          <EuiCallOut
-            title="Step 1 — Deploy the VPC Proxy CloudFormation Stack"
-            color="warning"
-            iconType="securityApp"
-          >
-            <EuiText size="s">
+          {proxyEndpoint ? (
+            <EuiCallOut
+              title="VPC Proxy active — reindex commands route through proxy"
+              color="success"
+              iconType="check"
+              size="s"
+            >
+              <EuiText size="s">
+                <p>
+                  All generated commands use the proxy NLB endpoint{" "}
+                  <code>{proxyEndpoint}</code> as the target.
+                  The proxy forwards requests to <code>{targetUrl}</code> over the internet
+                  via your VPC NAT gateway.
+                </p>
+              </EuiText>
+            </EuiCallOut>
+          ) : (
+            <EuiCallOut
+              title="VPC Proxy not yet configured"
+              color="warning"
+              iconType="warning"
+              size="s"
+            >
               <p>
-                Before running the reindex, deploy the proxy CloudFormation template. It will
-                create an EC2-based nginx proxy inside your VPC that forwards traffic to Elastic
-                Cloud.
+                Go back to <strong>Deploy Proxy</strong> to complete the CloudFormation
+                deployment and enter the proxy endpoint before running these commands.
               </p>
-            </EuiText>
-            <EuiSpacer size="s" />
-            <EuiCodeBlock language="bash" fontSize="s" paddingSize="s" isCopyable>
-              {`# Deploy the VPC proxy stack (from the iac/cloudformation/ directory)
-aws cloudformation deploy \\
-  --template-file iac/cloudformation/vpc-proxy.yaml \\
-  --stack-name opensearch-migration-proxy \\
-  --parameter-overrides \\
-    VpcId=<YOUR_VPC_ID> \\
-    SubnetId=<PRIVATE_SUBNET_ID> \\
-    ElasticCloudEndpoint=${targetUrl} \\
-  --capabilities CAPABILITY_IAM \\
-  --region ${sourceRegion}
-
-# Get the proxy endpoint
-aws cloudformation describe-stacks \\
-  --stack-name opensearch-migration-proxy \\
-  --query "Stacks[0].Outputs[?OutputKey=='ProxyEndpoint'].OutputValue" \\
-  --output text`}
-            </EuiCodeBlock>
-            <EuiSpacer size="s" />
-            <EuiText size="xs" color="subdued">
-              <p>
-                <EuiIcon type="iInCircle" size="s" /> Then use the proxy endpoint in place of{" "}
-                <code>{targetUrl}</code> in the reindex commands below.
-              </p>
-            </EuiText>
-          </EuiCallOut>
+            </EuiCallOut>
+          )}
           <EuiSpacer size="l" />
           <EuiTitle size="xs">
-            <h3>Step 2 — Run Remote Reindex via Proxy</h3>
+            <h3>Remote Reindex via VPC Proxy</h3>
           </EuiTitle>
           <EuiSpacer size="m" />
         </>
@@ -550,15 +554,15 @@ aws cloudformation describe-stacks \\
         >
           <EuiCodeBlock language="bash" fontSize="s" paddingSize="s" isCopyable>
             {`# List all running reindex tasks
-curl -X GET "${targetUrl}/_tasks?actions=*reindex&detailed&pretty" \\
+curl -X GET "${effectiveTargetUrl}/_tasks?actions=*reindex&detailed&pretty" \\
   -H "Authorization: ApiKey ${targetApiKey}"
 
 # Check document count on target index
-curl -X GET "${targetUrl}/<INDEX_NAME>/_count" \\
+curl -X GET "${effectiveTargetUrl}/<INDEX_NAME>/_count" \\
   -H "Authorization: ApiKey ${targetApiKey}"
 
 # Cancel a specific task if needed
-curl -X POST "${targetUrl}/_tasks/<TASK_ID>/_cancel" \\
+curl -X POST "${effectiveTargetUrl}/_tasks/<TASK_ID>/_cancel" \\
   -H "Authorization: ApiKey ${targetApiKey}"`}
           </EuiCodeBlock>
         </EuiAccordion>

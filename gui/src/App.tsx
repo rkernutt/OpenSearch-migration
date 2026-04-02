@@ -3,12 +3,14 @@ import { AppLayout } from "./components/AppLayout";
 import { SourcePage } from "./pages/SourcePage";
 import { TargetPage } from "./pages/TargetPage";
 import { MethodPage } from "./pages/MethodPage";
+import { ProxyDeployPage } from "./pages/ProxyDeployPage";
 import { IndicesPage } from "./pages/IndicesPage";
 import { ExecutePage } from "./pages/ExecutePage";
 import type { MigrationMethod } from "./pages/MethodPage";
 import type { IndexInfo } from "./pages/IndicesPage";
+import type { ProxyStatus } from "./pages/ProxyDeployPage";
 
-type Page = "source" | "target" | "method" | "indices" | "execute";
+type Page = "source" | "target" | "method" | "proxy_deploy" | "indices" | "execute";
 type AuthType = "iam" | "basic";
 type TargetType = "cloud" | "self_managed";
 type ConnectionStatus = "idle" | "testing" | "ok" | "fail";
@@ -35,6 +37,16 @@ export default function App() {
   // ── Method state ─────────────────────────────────────────────────────────
   const [migrationMethod, setMigrationMethod] = useState<MigrationMethod>("remote_reindex");
 
+  // ── Phase 2: VPC Proxy state ─────────────────────────────────────────────
+  const [vpcId, setVpcId] = useState("");
+  const [subnetId, setSubnetId] = useState("");
+  const [allowedCidr, setAllowedCidr] = useState("10.0.0.0/8");
+  const [instanceType, setInstanceType] = useState("t3.small");
+  const [keyPairName, setKeyPairName] = useState("");
+  const [proxyStatus, setProxyStatus] = useState<ProxyStatus>("idle");
+  const [proxyEndpoint, setProxyEndpoint] = useState("");
+  const [proxyTestMsg, setProxyTestMsg] = useState("");
+
   // ── Indices state ─────────────────────────────────────────────────────────
   const [availableIndices, setAvailableIndices] = useState<IndexInfo[]>([]);
   const [selectedIndices, setSelectedIndices] = useState<string[]>([]);
@@ -43,104 +55,39 @@ export default function App() {
   const [batchSize, setBatchSize] = useState(1000);
   const [slices, setSlices] = useState("auto");
 
+  // ── Helpers ───────────────────────────────────────────────────────────────
+
+  const isVpcProxyMode = migrationMethod === "vpc_proxy";
+
+  function handleMethodChange(m: MigrationMethod) {
+    setMigrationMethod(m);
+    // Reset proxy state if switching away from vpc_proxy
+    if (m !== "vpc_proxy") {
+      setProxyStatus("idle");
+      setProxyEndpoint("");
+      setProxyTestMsg("");
+    }
+  }
+
+  function handleMethodNext() {
+    if (migrationMethod === "vpc_proxy") {
+      setPage("proxy_deploy");
+    } else {
+      setPage("indices");
+    }
+  }
+
+  function handleProxyDeployBack() {
+    setPage("method");
+  }
+
   // ── Connection test handlers ──────────────────────────────────────────────
 
   async function handleTestSource() {
     if (!sourceEndpoint) return;
     setSourceStatus("testing");
     try {
-      // Attempt a lightweight call through /api proxy; fall back to format validation
-      const url = new URL(sourceEndpoint);
-      const resp = await fetch(`/api/test-source`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          endpoint: url.href,
-          region: sourceRegion,
-          authType: sourceAuthType,
-          username: sourceUsername,
-          password: sourcePassword,
-        }),
-        signal: AbortSignal.timeout(8000),
-      });
-      if (resp.ok) {
-        const data = await resp.json();
-        setSourceStatus("ok");
-        setSourceMsg(
-          `Connected — OpenSearch ${data.version ?? "unknown"} · ${data.clusterName ?? ""}`
-        );
-      } else {
-        const text = await resp.text();
-        setSourceStatus("fail");
-        setSourceMsg(text || `HTTP ${resp.status}`);
-      }
-    } catch (e: any) {
-      if (e?.name === "TypeError" && e.message?.includes("fetch")) {
-        // Backend proxy not running — validate URL format only
-        try {
-          new URL(sourceEndpoint);
-          setSourceStatus("ok");
-          setSourceMsg(
-            "URL format valid. (Backend proxy not running — connection not verified.)"
-          );
-        } catch {
-          setSourceStatus("fail");
-          setSourceMsg("Invalid URL format.");
-        }
-      } else {
-        setSourceStatus("fail");
-        setSourceMsg(e?.message ?? "Connection timed out");
-      }
-    }
-  }
-
-  async function handleTestTarget() {
-    if (!targetUrl || !targetApiKey) return;
-    setTargetStatus("testing");
-    try {
-      const resp = await fetch(`/api/test-target`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: targetUrl, apiKey: targetApiKey }),
-        signal: AbortSignal.timeout(8000),
-      });
-      if (resp.ok) {
-        const data = await resp.json();
-        setTargetStatus("ok");
-        setTargetMsg(
-          `Connected — Elasticsearch ${data.version ?? "unknown"} · ${data.clusterName ?? ""}`
-        );
-      } else {
-        const text = await resp.text();
-        setTargetStatus("fail");
-        setTargetMsg(text || `HTTP ${resp.status}`);
-      }
-    } catch (e: any) {
-      if (e?.name === "TypeError" && e.message?.includes("fetch")) {
-        try {
-          new URL(targetUrl);
-          setTargetStatus("ok");
-          setTargetMsg(
-            "URL format valid. (Backend proxy not running — connection not verified.)"
-          );
-        } catch {
-          setTargetStatus("fail");
-          setTargetMsg("Invalid URL format.");
-        }
-      } else {
-        setTargetStatus("fail");
-        setTargetMsg(e?.message ?? "Connection timed out");
-      }
-    }
-  }
-
-  // ── Load indices ──────────────────────────────────────────────────────────
-
-  async function handleLoadIndices() {
-    setIndicesLoading(true);
-    setIndicesError("");
-    try {
-      const resp = await fetch(`/api/indices`, {
+      const resp = await fetch("/api/test-source", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -150,20 +97,133 @@ export default function App() {
           username: sourceUsername,
           password: sourcePassword,
         }),
-        signal: AbortSignal.timeout(15000),
+        signal: AbortSignal.timeout(12000),
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        setSourceStatus("ok");
+        setSourceMsg(
+          `Connected — OpenSearch ${data.version ?? "unknown"}${data.clusterName ? ` · ${data.clusterName}` : ""}`
+        );
+      } else {
+        const data = await resp.json().catch(() => ({}));
+        setSourceStatus("fail");
+        setSourceMsg(data.error ?? `HTTP ${resp.status}`);
+      }
+    } catch (e: any) {
+      // Backend proxy not running — validate URL format only
+      if (e?.name === "TypeError" || e?.name === "AbortError") {
+        try {
+          new URL(sourceEndpoint);
+          setSourceStatus("ok");
+          setSourceMsg("URL format valid. (Proxy server not running — start with: node proxy.cjs)");
+        } catch {
+          setSourceStatus("fail");
+          setSourceMsg("Invalid URL format.");
+        }
+      } else {
+        setSourceStatus("fail");
+        setSourceMsg(e?.message ?? "Connection failed");
+      }
+    }
+  }
+
+  async function handleTestTarget() {
+    if (!targetUrl || !targetApiKey) return;
+    setTargetStatus("testing");
+    try {
+      const resp = await fetch("/api/test-target", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: targetUrl, apiKey: targetApiKey }),
+        signal: AbortSignal.timeout(12000),
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        setTargetStatus("ok");
+        setTargetMsg(
+          `Connected — Elasticsearch ${data.version ?? "unknown"}${data.clusterName ? ` · ${data.clusterName}` : ""}`
+        );
+      } else {
+        const data = await resp.json().catch(() => ({}));
+        setTargetStatus("fail");
+        setTargetMsg(data.error ?? `HTTP ${resp.status}`);
+      }
+    } catch (e: any) {
+      if (e?.name === "TypeError" || e?.name === "AbortError") {
+        try {
+          new URL(targetUrl);
+          setTargetStatus("ok");
+          setTargetMsg("URL format valid. (Proxy server not running — start with: node proxy.cjs)");
+        } catch {
+          setTargetStatus("fail");
+          setTargetMsg("Invalid URL format.");
+        }
+      } else {
+        setTargetStatus("fail");
+        setTargetMsg(e?.message ?? "Connection failed");
+      }
+    }
+  }
+
+  // ── Phase 2: Proxy connectivity test ─────────────────────────────────────
+
+  async function handleTestProxy() {
+    if (!proxyEndpoint) return;
+    setProxyStatus("testing");
+    try {
+      const resp = await fetch("/api/test-proxy", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ proxyEndpoint, apiKey: targetApiKey }),
+        signal: AbortSignal.timeout(12000),
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        setProxyStatus("confirmed");
+        setProxyTestMsg(
+          `Proxy reachable — forwarding to Elasticsearch ${data.version ?? "unknown"}${data.clusterName ? ` · ${data.clusterName}` : ""}`
+        );
+      } else {
+        const data = await resp.json().catch(() => ({}));
+        setProxyStatus("failed");
+        setProxyTestMsg(data.error ?? `HTTP ${resp.status}`);
+      }
+    } catch (e: any) {
+      setProxyStatus("failed");
+      setProxyTestMsg(e?.message ?? "Could not reach proxy endpoint");
+    }
+  }
+
+  // ── Load indices ──────────────────────────────────────────────────────────
+
+  async function handleLoadIndices() {
+    setIndicesLoading(true);
+    setIndicesError("");
+    try {
+      const resp = await fetch("/api/indices", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          endpoint: sourceEndpoint,
+          region: sourceRegion,
+          authType: sourceAuthType,
+          username: sourceUsername,
+          password: sourcePassword,
+        }),
+        signal: AbortSignal.timeout(20000),
       });
       if (resp.ok) {
         const data: IndexInfo[] = await resp.json();
         setAvailableIndices(data);
         setSelectedIndices(data.map((i) => i.name));
       } else {
-        const text = await resp.text();
-        setIndicesError(text || `HTTP ${resp.status}`);
-        // Provide sample data so the UI is still usable
+        const data = await resp.json().catch(() => ({}));
+        setIndicesError(data.error ?? `HTTP ${resp.status}`);
         setAvailableIndices(SAMPLE_INDICES);
       }
     } catch {
-      setIndicesError("Could not reach source cluster via backend proxy.");
+      setIndicesError("Could not reach source cluster via proxy server.");
       setAvailableIndices(SAMPLE_INDICES);
     } finally {
       setIndicesLoading(false);
@@ -182,9 +242,11 @@ export default function App() {
     <AppLayout
       activePage={page}
       onNavigate={(p) => setPage(p as Page)}
+      isVpcProxyMode={isVpcProxyMode}
       sourceConnected={sourceStatus === "ok"}
       targetConnected={targetStatus === "ok"}
       methodSelected={true}
+      proxyDeployed={proxyStatus === "confirmed"}
       indicesSelected={selectedIndices.length > 0}
     >
       {page === "source" && (
@@ -225,8 +287,34 @@ export default function App() {
       {page === "method" && (
         <MethodPage
           method={migrationMethod}
-          onMethodChange={setMigrationMethod}
+          onMethodChange={handleMethodChange}
           onBack={() => setPage("target")}
+          onNext={handleMethodNext}
+        />
+      )}
+
+      {page === "proxy_deploy" && (
+        <ProxyDeployPage
+          sourceRegion={sourceRegion}
+          targetUrl={targetUrl}
+          vpcId={vpcId}
+          subnetId={subnetId}
+          allowedCidr={allowedCidr}
+          instanceType={instanceType}
+          keyPairName={keyPairName}
+          proxyStatus={proxyStatus}
+          proxyEndpoint={proxyEndpoint}
+          proxyTestMsg={proxyTestMsg}
+          onVpcIdChange={setVpcId}
+          onSubnetIdChange={setSubnetId}
+          onAllowedCidrChange={setAllowedCidr}
+          onInstanceTypeChange={setInstanceType}
+          onKeyPairNameChange={setKeyPairName}
+          onProxyStatusChange={setProxyStatus}
+          onProxyEndpointChange={setProxyEndpoint}
+          onProxyTestMsgChange={setProxyTestMsg}
+          onTestProxy={handleTestProxy}
+          onBack={handleProxyDeployBack}
           onNext={() => setPage("indices")}
         />
       )}
@@ -245,7 +333,7 @@ export default function App() {
           onClearAll={() => setSelectedIndices([])}
           onBatchSizeChange={setBatchSize}
           onSlicesChange={setSlices}
-          onBack={() => setPage("method")}
+          onBack={() => setPage(isVpcProxyMode ? "proxy_deploy" : "method")}
           onNext={() => setPage("execute")}
         />
       )}
@@ -260,6 +348,7 @@ export default function App() {
           targetUrl={targetUrl}
           targetApiKey={targetApiKey}
           migrationMethod={migrationMethod}
+          proxyEndpoint={proxyEndpoint}
           selectedIndices={selectedIndices}
           availableIndices={availableIndices}
           batchSize={batchSize}
@@ -271,11 +360,11 @@ export default function App() {
   );
 }
 
-// Sample indices shown when backend proxy is unavailable
+// Sample indices shown when proxy server is unavailable
 const SAMPLE_INDICES: IndexInfo[] = [
-  { name: "logs-app-2024", docCount: 4_820_000, sizeBytes: 3_221_225_472 },
-  { name: "logs-app-2023", docCount: 12_100_000, sizeBytes: 8_589_934_592 },
-  { name: "metrics-system", docCount: 920_000, sizeBytes: 524_288_000 },
-  { name: "apm-traces", docCount: 2_400_000, sizeBytes: 2_147_483_648 },
-  { name: "security-events", docCount: 380_000, sizeBytes: 268_435_456 },
+  { name: "logs-app-2024",    docCount: 4_820_000,  sizeBytes: 3_221_225_472 },
+  { name: "logs-app-2023",    docCount: 12_100_000, sizeBytes: 8_589_934_592 },
+  { name: "metrics-system",   docCount: 920_000,    sizeBytes: 524_288_000  },
+  { name: "apm-traces",       docCount: 2_400_000,  sizeBytes: 2_147_483_648 },
+  { name: "security-events",  docCount: 380_000,    sizeBytes: 268_435_456  },
 ];

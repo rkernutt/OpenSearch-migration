@@ -13,61 +13,84 @@ import {
 } from "@elastic/eui";
 import { ElasticMark, OpenSearchMark, MigrationArrow } from "./Logo";
 
+type Page = "source" | "target" | "method" | "proxy_deploy" | "indices" | "execute";
+
 interface AppLayoutProps {
   activePage: string;
   onNavigate: (page: string) => void;
   children: React.ReactNode;
+  isVpcProxyMode: boolean;
   sourceConnected: boolean;
   targetConnected: boolean;
   methodSelected: boolean;
+  proxyDeployed: boolean;
   indicesSelected: boolean;
 }
 
-const STEPS = [
-  { id: "source", title: "Source" },
-  { id: "target", title: "Target" },
-  { id: "method", title: "Method" },
+/** Steps for standard (non-VPC) flow */
+const STANDARD_STEPS = [
+  { id: "source",  title: "Source"  },
+  { id: "target",  title: "Target"  },
+  { id: "method",  title: "Method"  },
   { id: "indices", title: "Indices" },
   { id: "execute", title: "Execute" },
 ] as const;
 
-const STEP_IDS = STEPS.map((s) => s.id);
+/** Steps for VPC proxy flow — adds Deploy Proxy between Method and Indices */
+const VPC_STEPS = [
+  { id: "source",       title: "Source"       },
+  { id: "target",       title: "Target"       },
+  { id: "method",       title: "Method"       },
+  { id: "proxy_deploy", title: "Deploy Proxy" },
+  { id: "indices",      title: "Indices"      },
+  { id: "execute",      title: "Execute"      },
+] as const;
+
+type StepCompletion = {
+  source: boolean;
+  target: boolean;
+  method: boolean;
+  proxy_deploy: boolean;
+  indices: boolean;
+};
 
 export function AppLayout({
   activePage,
   onNavigate,
   children,
+  isVpcProxyMode,
   sourceConnected,
   targetConnected,
   methodSelected,
+  proxyDeployed,
   indicesSelected,
 }: AppLayoutProps) {
-  const activeStepIdx = STEP_IDS.indexOf(activePage as (typeof STEP_IDS)[number]);
+  const steps = isVpcProxyMode ? VPC_STEPS : STANDARD_STEPS;
+  const stepIds = steps.map((s) => s.id as string);
+  const activeStepIdx = stepIds.indexOf(activePage);
 
-  const stepStatuses = STEPS.map((step, idx) => {
+  const completion: StepCompletion = {
+    source: sourceConnected,
+    target: targetConnected,
+    method: methodSelected,
+    proxy_deploy: proxyDeployed,
+    indices: indicesSelected,
+  };
+
+  const stepStatuses = steps.map((step, idx) => {
     const isPast = activeStepIdx === -1 || idx < activeStepIdx;
-    let isComplete = false;
-    if (isPast) {
-      if (step.id === "source") isComplete = sourceConnected;
-      if (step.id === "target") isComplete = targetConnected;
-      if (step.id === "method") isComplete = methodSelected;
-      if (step.id === "indices") isComplete = indicesSelected;
-    }
+    const isComplete = isPast && completion[step.id as keyof StepCompletion] !== false;
 
-    let stepStatus: "complete" | "current" | "incomplete" | "disabled";
+    let status: "complete" | "current" | "incomplete" | "disabled";
     if (idx === activeStepIdx) {
-      stepStatus = "current";
+      status = "current";
     } else if (isComplete) {
-      stepStatus = "complete";
+      status = "complete";
     } else {
-      stepStatus = "incomplete";
+      status = "incomplete";
     }
 
-    return {
-      title: step.title,
-      status: stepStatus,
-      onClick: () => onNavigate(step.id),
-    };
+    return { title: step.title, status, onClick: () => onNavigate(step.id) };
   });
 
   return (
@@ -81,22 +104,15 @@ export function AppLayout({
             items: [
               <EuiHeaderSectionItem key="brand">
                 <EuiFlexGroup gutterSize="s" alignItems="center" responsive={false}>
-                  {/* OpenSearch mark */}
                   <EuiFlexItem grow={false}>
                     <OpenSearchMark height={28} />
                   </EuiFlexItem>
-
-                  {/* Migration arrow */}
                   <EuiFlexItem grow={false}>
                     <MigrationArrow height={22} />
                   </EuiFlexItem>
-
-                  {/* Elastic mark */}
                   <EuiFlexItem grow={false}>
                     <ElasticMark height={28} />
                   </EuiFlexItem>
-
-                  {/* App title */}
                   <EuiFlexItem grow={false}>
                     <EuiTitle size="s">
                       <h1
@@ -134,6 +150,18 @@ export function AppLayout({
                       </EuiBadge>
                     </EuiFlexItem>
                   )}
+                  {isVpcProxyMode && (
+                    <EuiFlexItem grow={false}>
+                      <EuiBadge color="warning">VPC Proxy</EuiBadge>
+                    </EuiFlexItem>
+                  )}
+                  {proxyDeployed && isVpcProxyMode && (
+                    <EuiFlexItem grow={false}>
+                      <EuiBadge color="success">
+                        <EuiIcon type="check" size="s" /> Proxy Ready
+                      </EuiBadge>
+                    </EuiFlexItem>
+                  )}
                   <EuiFlexItem grow={false}>
                     <EuiBadge color="hollow">v1.0.0</EuiBadge>
                   </EuiFlexItem>
@@ -147,7 +175,6 @@ export function AppLayout({
       {/* ── Main content area ────────────────────────────────────────── */}
       <EuiPageTemplate restrictWidth={1200} grow style={{ paddingTop: 48 }}>
         <EuiPageTemplate.Section>
-          {/* Wizard stepper */}
           <EuiStepsHorizontal steps={stepStatuses} />
           <EuiSpacer size="l" />
           {children}

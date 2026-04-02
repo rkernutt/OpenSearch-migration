@@ -1,0 +1,18 @@
+services:
+  migration-gui:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: opensearch-migration-gui:latest
+    container_name: opensearch-migration-gui
+    ports:
+      - "8766:8766"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8766/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    labels:
+      - "com.docker.description=OpenSearch → Elastic Migration Assistant"
