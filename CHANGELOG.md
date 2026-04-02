@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-04-02
+
+### Added
+
+- **`docs/ARCHITECTURE.md`** — six Mermaid diagrams covering: migration path overview, VPC proxy request flow, validation/preflight tool flow, multi-index batch migration lifecycle, AWS deployment topology, and CI/CD pipeline.
+- README documentation map entry for `docs/ARCHITECTURE.md`.
+
 ## [1.1.1] - 2026-04-02
 
 ### Fixed

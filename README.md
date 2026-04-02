@@ -18,6 +18,7 @@ This project helps you read indexes from an OpenSearch cluster and migrate or re
 
 | Doc | Purpose |
 |-----|---------|
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Architecture and process flow diagrams (Mermaid) |
 | [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) | First-time setup, `.env`, validate |
 | [RUNBOOK.md](RUNBOOK.md) | Migration procedures, versioning, throughput |
 | [docs/AUTOMATION.md](docs/AUTOMATION.md) | Exit codes, `make`, `multi_index` env |
