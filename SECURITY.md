@@ -23,18 +23,46 @@ This document describes how to handle secrets and **least-privilege** access for
 |-------------|---------|
 | `SOURCE_*`, `DEST_*`, `AWS_*` | `validate_migration.py`, `preflight.py` |
 | `DEST_ELASTIC_*` | `poll_reindex_task.py`, `preflight.py` |
+| `DEST_ELASTIC_API_KEY_ENCODED` | `validate_migration.py`, `poll_reindex_task.py` — set to `1` if the API key is already Base64-encoded |
 | `MIGRATION_DEST_*` | `multi_index_reindex.py` (optional defaults) |
 | `OPENSEARCH_ENDPOINT`, `PROXY_USER`, `PROXY_PASSWORD`, `AWS_*` | [Proxy/app.py](Proxy/app.py) |
+| `PROXY_VERIFY_TLS`, `PROXY_CA_BUNDLE`, `PROXY_DEBUG` | [Proxy/app.py](Proxy/app.py) — TLS and debug options |
+| `VALIDATION_TIMEOUT_SHORT`, `VALIDATION_TIMEOUT_SEARCH` | `validate_migration.py`, `preflight.py` — override default request timeouts |
 
 ---
 
 ## IAM: who needs what
 
-### 1. Your workstation or automation calling OpenSearch APIs (SigV4)
+### 1. `validate_migration.py` and `preflight.py` (SigV4 source auth)
 
-Used by: `validate_migration.py` (when using SigV4 for the source), and optionally the [Proxy](Proxy/README.md).
+When using SigV4 (no `--source-user` / `--source-password`), the caller's IAM principal needs **read-only** access to the source domain. These scripts only use `GET`, `HEAD`, and `POST` (read operations: `_count`, `_search`, `_mget`).
 
-**Minimum (typical):** allow HTTP calls to the OpenSearch domain (read operations such as `_count`, `_search` for validation; the proxy forwards whatever your client sends).
+**Minimum least-privilege policy:**
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "es:ESHttpGet",
+        "es:ESHttpHead",
+        "es:ESHttpPost"
+      ],
+      "Resource": "arn:aws:es:REGION:ACCOUNT_ID:domain/YOUR_DOMAIN_NAME/*"
+    }
+  ]
+}
+```
+
+Do **not** grant `es:ESHttpPut`, `es:ESHttpDelete`, or `es:ESHttpPatch` to the validation role — it only reads.
+
+### 2. Your workstation or automation calling OpenSearch APIs for reindex (SigV4)
+
+Used by: the [Proxy](Proxy/README.md) when forwarding reindex or write operations.
+
+**Broader policy (reindex or write path):**
 
 ```json
 {
@@ -55,15 +83,15 @@ Used by: `validate_migration.py` (when using SigV4 for the source), and optional
 }
 ```
 
-Narrow `Action` if you know the exact operations your use case needs (for example read-only for validation only).
+Narrow `Action` if you know the exact operations your use case needs.
 
-### 2. Proxy ([Proxy/app.py](Proxy/app.py))
+### 3. Proxy ([Proxy/app.py](Proxy/app.py))
 
 The task/instance role should allow `es:ESHttpGet`, `es:ESHttpPost`, `es:ESHttpPut`, `es:ESHttpHead`, `es:ESHttpDelete` on the target domain (same pattern as section 1).
 
 **Logging:** Avoid logging full request or response bodies on the proxy; they can contain PII or credentials in queries. The stock proxy does not log bodies.
 
-### 3. Elastic Cloud API key (destination)
+### 4. Elastic Cloud API key (destination)
 
 Create an API key (or user) **only for migration**:
 
@@ -92,6 +120,37 @@ When the proxy is exposed publicly (e.g. behind an ALB), always set strong rando
 
 - Pin versions in [requirements.txt](requirements.txt) and refresh periodically.
 - In CI or locally: consider **`pip audit`** (or your org’s SCA tool) on `requirements.txt` / `requirements-dev.txt` to catch known vulnerable packages.
+
+---
+
+## Credential rotation and long-running jobs
+
+Migration jobs can run for hours. Plan credential lifetimes accordingly.
+
+### Before starting a long job
+
+- **Elastic API keys:** create keys with an expiration **at least 2× the expected migration duration** plus a buffer (e.g. 24 h for a 6 h job). Check the expiry in the Elastic UI under Stack Management → API keys.
+- **AWS temporary credentials (AssumeRole / instance metadata):** the default session duration is 1 h (configurable up to 12 h for roles). If `poll_reindex_task.py` or `validate_migration.py` runs longer than the session, the next AWS SDK call refreshes credentials automatically via the credential chain — no action needed as long as the IAM role is still attached and the instance metadata service is reachable.
+- **IAM user long-term keys:** avoid for automation; prefer instance/task roles or short-lived tokens from `sts:AssumeRole`.
+
+### If a key expires mid-migration
+
+`poll_reindex_task.py` (≥ v1.0) tolerates up to 5 consecutive HTTP failures before aborting. A 401 on each poll attempt will exhaust those retries within seconds.
+
+**Recovery steps:**
+
+1. Note the `task_id` from the original `POST _reindex?wait_for_completion=false` response — you can always re-attach to a running task.
+2. Create a new Elastic API key or rotate the existing one.
+3. Re-run `poll_reindex_task.py` with the new key: `--dest-api-key <new_key>`.
+4. The reindex task continues in the background on Elastic regardless of whether the poller is running.
+
+### After cutover
+
+Revoke all migration-specific credentials immediately after the observation period:
+
+- **Elastic:** Stack Management → API keys → Invalidate.
+- **AWS:** delete the IAM user key pair or remove the migration role from the instance/task profile.
+- **Proxy basic auth:** change `PROXY_USER`/`PROXY_PASSWORD` or tear down the proxy ECS service / EC2 instance.
 
 ---
 

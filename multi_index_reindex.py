@@ -116,6 +116,11 @@ def main():
         default="60m",
         help="With --large: source.remote.socket_timeout (default 60m).",
     )
+    parser.add_argument(
+        "--mask-credentials",
+        action="store_true",
+        help="Replace username and password in generated output with '***' (safe for logs/CI artifacts).",
+    )
     args = parser.parse_args()
 
     indices: List[str] = []
@@ -145,14 +150,23 @@ def main():
         print("Use this list to run Logstash once per index (e.g. in a loop).", file=sys.stderr)
         return
 
+    if not args.mask_credentials and args.password != "password":
+        print(
+            "WARNING: output contains plaintext credentials. Use --mask-credentials to redact, "
+            "or --output <file> to write to a file instead of stdout.",
+            file=sys.stderr,
+        )
+
     tpl = REINDEX_TEMPLATE_LARGE if args.large else REINDEX_TEMPLATE
     blocks = []
+    _username = "***" if args.mask_credentials else args.username
+    _password = "***" if args.mask_credentials else args.password
     for idx in indices:
         dest_name = args.dest_prefix + idx + args.dest_suffix
         remote = {
             "host": args.source_host,
-            "username": args.username,
-            "password": args.password,
+            "username": _username,
+            "password": _password,
         }
         source: dict = {
             "remote": remote,

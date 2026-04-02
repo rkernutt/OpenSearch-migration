@@ -20,7 +20,10 @@ import sys
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
+import datetime
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from requests_aws4auth import AWS4Auth
 
 try:
@@ -28,10 +31,62 @@ try:
 except ImportError:
     boto3 = None
 
+# ---------------------------------------------------------------------------
+# Configurable timeouts (override via environment variables)
+# ---------------------------------------------------------------------------
+_TIMEOUT_SHORT = int(os.environ.get("VALIDATION_TIMEOUT_SHORT", "30"))   # HEAD, GET _count
+_TIMEOUT_SEARCH = int(os.environ.get("VALIDATION_TIMEOUT_SEARCH", "120"))  # POST _search, _mget
+
+
+def _make_session() -> requests.Session:
+    """
+    Return a requests Session with exponential-backoff retry on transient errors.
+    Retries on 429, 500, 502, 503, 504 for idempotent methods (GET, HEAD, POST).
+    """
+    retry = Retry(
+        total=3,
+        backoff_factor=1,          # 0s, 1s, 2s between attempts
+        status_forcelist=(429, 500, 502, 503, 504),
+        allowed_methods={"GET", "HEAD", "POST"},
+        raise_on_status=False,
+    )
+    adapter = HTTPAdapter(max_retries=retry)
+    session = requests.Session()
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    return session
+
+
+_SESSION = _make_session()
+
+# ---------------------------------------------------------------------------
+# Structured logging helper
+# ---------------------------------------------------------------------------
+_LOG_FORMAT_JSON = False  # set to True when --log-format=json is parsed
+
+
+def _cli_log(level: str, message: str, **extra) -> None:
+    """
+    Emit a structured log line to stderr.
+    Plain text by default; JSON when _LOG_FORMAT_JSON is True (set via --log-format=json).
+    """
+    if _LOG_FORMAT_JSON:
+        record = {
+            "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+            "level": level,
+            "message": message,
+        }
+        record.update(extra)
+        print(json.dumps(record), file=sys.stderr)
+    else:
+        suffix = "".join(f" {k}={v}" for k, v in extra.items())
+        print(f"{level.upper()}: {message}{suffix}", file=sys.stderr)
+
 
 @dataclass
 class DestAuth:
     api_key: Optional[str] = None
+    api_key_encoded: bool = False   # True = key is already Base64-encoded
     user: Optional[str] = None
     password: Optional[str] = None
 
@@ -41,8 +96,12 @@ class DestAuth:
         a = None
         if self.api_key:
             key = self.api_key
-            if ":" in key and " " not in key:
-                key = base64.b64encode(key.encode()).decode()
+            if not self.api_key_encoded:
+                # Raw Elastic API keys are in id:secret format; Base64-encode them.
+                # Base64 alphabet (A-Za-z0-9+/=) never contains a colon, so the
+                # presence of ":" reliably identifies an unencoded key.
+                if ":" in key:
+                    key = base64.b64encode(key.encode()).decode()
             h["Authorization"] = f"ApiKey {key}"
         elif self.user and self.password:
             a = (self.user, self.password)
@@ -160,7 +219,7 @@ def _fetch_stats_min_max(
 ) -> Tuple[Optional[float], Optional[float]]:
     """min/max from stats aggregation (date and numeric fields)."""
     body = {"size": 0, "aggs": {"_bounds": {"stats": {"field": field}}}}
-    r = requests.post(url_search, auth=auth, json=body, timeout=60)
+    r = _SESSION.post(url_search, auth=auth, json=body, timeout=_TIMEOUT_SEARCH)
     r.raise_for_status()
     data = r.json()
     st = data.get("aggregations", {}).get("_bounds", {})
@@ -197,16 +256,22 @@ def _sample_doc_ids_time_stratified(
     sizes = distribute_sample_sizes(n, k)
     base_seed = random_seed if random_seed is not None else 42
     out: List[str] = []
+    empty_buckets = 0
     for i, (rng, sz) in enumerate(zip(ranges, sizes)):
         if sz <= 0:
             continue
         body = build_time_bucket_search_body(sz, field, rng, base_seed + i)
-        r = requests.post(url, auth=auth, json=body, timeout=120)
+        r = _SESSION.post(url, auth=auth, json=body, timeout=_TIMEOUT_SEARCH)
         r.raise_for_status()
         data = r.json()
         hits = data.get("hits", {}).get("hits", [])
+        if not hits:
+            empty_buckets += 1
         out.extend(h["_id"] for h in hits if "_id" in h)
-    return list(dict.fromkeys(out)), f"time_field={field}, buckets={k}"
+    note = f"time_field={field}, buckets={k}"
+    if empty_buckets:
+        note += f" ({empty_buckets} empty)"
+    return list(dict.fromkeys(out)), note
 
 
 def opensearch_auth_sigv4(region: str) -> AWS4Auth:
@@ -227,7 +292,7 @@ def opensearch_auth_sigv4(region: str) -> AWS4Auth:
 def head_index_opensearch_sigv4(host: str, index: str, region: str) -> bool:
     auth = opensearch_auth_sigv4(region)
     url = host.rstrip("/") + "/" + index
-    r = requests.head(url, auth=auth, timeout=30)
+    r = _SESSION.head(url, auth=auth, timeout=_TIMEOUT_SHORT)
     if r.status_code == 404:
         return False
     r.raise_for_status()
@@ -236,7 +301,7 @@ def head_index_opensearch_sigv4(host: str, index: str, region: str) -> bool:
 
 def head_index_opensearch_basic(host: str, index: str, user: str, password: str) -> bool:
     url = host.rstrip("/") + "/" + index
-    r = requests.head(url, auth=(user, password), timeout=30)
+    r = _SESSION.head(url, auth=(user, password), timeout=_TIMEOUT_SHORT)
     if r.status_code == 404:
         return False
     r.raise_for_status()
@@ -246,7 +311,7 @@ def head_index_opensearch_basic(host: str, index: str, user: str, password: str)
 def head_index_elastic(host: str, index: str, dest: DestAuth) -> bool:
     url = host.rstrip("/") + "/" + index
     headers, auth = dest.apply()
-    r = requests.head(url, headers=headers or None, auth=auth, timeout=30)
+    r = _SESSION.head(url, headers=headers or None, auth=auth, timeout=_TIMEOUT_SHORT)
     if r.status_code == 404:
         return False
     r.raise_for_status()
@@ -256,14 +321,14 @@ def head_index_elastic(host: str, index: str, dest: DestAuth) -> bool:
 def get_count_opensearch_sigv4(host: str, index: str, region: str) -> int:
     auth = opensearch_auth_sigv4(region)
     url = host.rstrip("/") + "/" + index + "/_count"
-    r = requests.get(url, auth=auth, timeout=30)
+    r = _SESSION.get(url, auth=auth, timeout=_TIMEOUT_SHORT)
     r.raise_for_status()
     return r.json()["count"]
 
 
 def get_count_opensearch_basic(host: str, index: str, user: str, password: str) -> int:
     url = host.rstrip("/") + "/" + index + "/_count"
-    r = requests.get(url, auth=(user, password), timeout=30)
+    r = _SESSION.get(url, auth=(user, password), timeout=_TIMEOUT_SHORT)
     r.raise_for_status()
     return r.json()["count"]
 
@@ -271,7 +336,7 @@ def get_count_opensearch_basic(host: str, index: str, user: str, password: str) 
 def get_count_elastic(host: str, index: str, dest: DestAuth) -> int:
     url = host.rstrip("/") + "/" + index + "/_count"
     headers, auth = dest.apply()
-    r = requests.get(url, headers=headers or None, auth=auth, timeout=30)
+    r = _SESSION.get(url, headers=headers or None, auth=auth, timeout=_TIMEOUT_SHORT)
     r.raise_for_status()
     return r.json()["count"]
 
@@ -292,7 +357,7 @@ def _sample_doc_ids_stratified(
         if sizes[i] <= 0:
             continue
         body = build_stratified_slice_search_body(sizes[i], i, k, base_seed + i)
-        r = requests.post(url, auth=auth, json=body, timeout=120)
+        r = _SESSION.post(url, auth=auth, json=body, timeout=_TIMEOUT_SEARCH)
         r.raise_for_status()
         data = r.json()
         hits = data.get("hits", {}).get("hits", [])
@@ -327,7 +392,7 @@ def sample_doc_ids_opensearch_sigv4(
             time_meta.append(note)
         return ids
     body = build_sample_search_body(size, sample_mode, random_seed)
-    r = requests.post(url, auth=auth, json=body, timeout=60)
+    r = _SESSION.post(url, auth=auth, json=body, timeout=_TIMEOUT_SEARCH)
     r.raise_for_status()
     data = r.json()
     hits = data.get("hits", {}).get("hits", [])
@@ -360,7 +425,7 @@ def sample_doc_ids_opensearch_basic(
             time_meta.append(note)
         return ids
     body = build_sample_search_body(size, sample_mode, random_seed)
-    r = requests.post(url, auth=(user, password), json=body, timeout=60)
+    r = _SESSION.post(url, auth=(user, password), json=body, timeout=_TIMEOUT_SEARCH)
     r.raise_for_status()
     data = r.json()
     hits = data.get("hits", {}).get("hits", [])
@@ -378,7 +443,7 @@ def verify_ids_mget_elastic(
     url = host.rstrip("/") + "/" + index + "/_mget"
     body = {"ids": ids}
     headers, auth = dest.apply({"Content-Type": "application/json"})
-    r = requests.post(url, headers=headers, auth=auth, json=body, timeout=60)
+    r = _SESSION.post(url, headers=headers, auth=auth, json=body, timeout=_TIMEOUT_SEARCH)
     r.raise_for_status()
     data = r.json()
     docs = data.get("docs", [])
@@ -392,6 +457,44 @@ def verify_ids_mget_elastic(
             if mid:
                 missing.append(mid)
     return found, missing
+
+
+def validate_index_name(name: str) -> Optional[str]:
+    """
+    Return an error string if *name* is not a valid OpenSearch/Elasticsearch index name,
+    or None if it is valid.
+    Rules: no uppercase; must not start with '-', '_', or '+'; no spaces or
+    special characters (, # * ? " < > | / \\ :).
+    """
+    import re
+
+    if not name:
+        return "index name must not be empty"
+    if name != name.lower():
+        return f"index name must be lowercase: {name!r}"
+    if name[0] in ("-", "_", "+"):
+        return f"index name must not start with '-', '_', or '+': {name!r}"
+    invalid = set(name) & set(' ,#*?"<>|\\/: \t\n')
+    if invalid:
+        chars = ", ".join(repr(c) for c in sorted(invalid))
+        return f"index name contains invalid characters ({chars}): {name!r}"
+    if re.search(r"[\x00-\x1f]", name):
+        return f"index name contains control characters: {name!r}"
+    return None
+
+
+def _redact_response_text(text: str) -> str:
+    """
+    Strip potential credential patterns from error response bodies before logging.
+    Masks Base64-like tokens and 'ApiKey ...' / 'Bearer ...' patterns.
+    """
+    import re
+
+    # Mask Authorization header values
+    text = re.sub(r"(ApiKey|Bearer)\s+[A-Za-z0-9+/=_\-]{8,}", r"\1 ***", text)
+    # Mask long Base64-like strings that look like encoded secrets
+    text = re.sub(r"[A-Za-z0-9+/]{40,}={0,2}", "***", text)
+    return text
 
 
 def parse_indices_arg(indices: str) -> List[str]:
@@ -430,6 +533,11 @@ def validate_pair(
     Return (ok, detail_message, category) where category is \"ok\", \"validation\", or \"transport\".
     """
     try:
+        for idx_name, label in ((source_index, "source"), (dest_index, "destination")):
+            err = validate_index_name(idx_name)
+            if err:
+                return False, f"Invalid {label} index name — {err}", "validation"
+
         if not use_sigv4:
             if source_user is None or source_password is None:
                 return (
@@ -442,7 +550,8 @@ def validate_pair(
                 if not head_index_opensearch_sigv4(source_host, source_index, source_region):
                     return False, f"Source index does not exist: {source_index}", "validation"
             else:
-                assert source_user is not None and source_password is not None
+                if source_user is None or source_password is None:
+                    return False, "OpenSearch user and password are required when not using SigV4", "validation"
                 if not head_index_opensearch_basic(
                     source_host, source_index, source_user, source_password
                 ):
@@ -453,7 +562,8 @@ def validate_pair(
         if use_sigv4:
             source_count = get_count_opensearch_sigv4(source_host, source_index, source_region)
         else:
-            assert source_user is not None and source_password is not None
+            if source_user is None or source_password is None:
+                return False, "OpenSearch user and password are required when not using SigV4", "validation"
             source_count = get_count_opensearch_basic(
                 source_host, source_index, source_user, source_password
             )
@@ -485,7 +595,8 @@ def validate_pair(
                     time_meta=time_meta if sample_mode == "time_stratified" else None,
                 )
             else:
-                assert source_user is not None and source_password is not None
+                if source_user is None or source_password is None:
+                    return False, "OpenSearch user and password are required when not using SigV4", "validation"
                 ids = sample_doc_ids_opensearch_basic(
                     source_host,
                     source_index,
@@ -524,7 +635,7 @@ def validate_pair(
     except requests.RequestException as e:
         msg = str(e)
         if hasattr(e, "response") and e.response is not None:
-            msg += f" — {e.response.text[:500]}"
+            msg += f" — {_redact_response_text(e.response.text[:500])}"
         return False, msg, "transport"
 
 
@@ -583,6 +694,12 @@ def main():
         "--dest-api-key", default=os.environ.get("DEST_ELASTIC_API_KEY"), help="Elastic API key"
     )
     parser.add_argument(
+        "--dest-api-key-encoded",
+        action="store_true",
+        default=os.environ.get("DEST_ELASTIC_API_KEY_ENCODED", "").lower() in ("1", "true", "yes"),
+        help="Indicate that --dest-api-key is already Base64-encoded (skip automatic encoding).",
+    )
+    parser.add_argument(
         "--dest-user", default=os.environ.get("DEST_ELASTIC_USER"), help="Elastic user"
     )
     parser.add_argument(
@@ -639,6 +756,12 @@ def main():
         help="text: human lines; json: one JSON object on stdout; csv: header + rows (good for CI artifacts).",
     )
     parser.add_argument(
+        "--log-format",
+        choices=("text", "json"),
+        default="text",
+        help="Stderr log format: text (default) or json (one JSON object per line, useful for CI).",
+    )
+    parser.add_argument(
         "--strict-exit-codes",
         action="store_true",
         help=(
@@ -670,20 +793,21 @@ def main():
         )
 
     use_sigv4 = not (args.source_user and args.source_password)
+    global _LOG_FORMAT_JSON
+    _LOG_FORMAT_JSON = args.log_format == "json"
+
     if use_sigv4 and not boto3:
-        print("Error: For SigV4 source auth, boto3 is required.", file=sys.stderr)
+        _cli_log("error", "For SigV4 source auth, boto3 is required.")
         sys.exit(2 if args.strict_exit_codes else 1)
     if not args.dest_api_key and not (args.dest_user and args.dest_password):
-        print(
-            "Error: Set --dest-api-key or (--dest-user and --dest-password) for Elastic.",
-            file=sys.stderr,
-        )
+        _cli_log("error", "Set --dest-api-key or (--dest-user and --dest-password) for Elastic.")
         sys.exit(2 if args.strict_exit_codes else 1)
     if args.sample_mode == "time_stratified" and not args.time_field:
         parser.error("--sample-mode time_stratified requires --time-field")
 
     dest_auth = DestAuth(
         api_key=args.dest_api_key,
+        api_key_encoded=args.dest_api_key_encoded,
         user=args.dest_user,
         password=args.dest_password,
     )
@@ -745,7 +869,7 @@ def main():
                 f"[{row['status']}] {row['source_index']} -> {row['dest_index']}: {row['detail']}"
             )
         if failures:
-            print(f"\n{len(pairs)} pair(s) checked; {failures} failed.", file=sys.stderr)
+            _cli_log("error", f"{len(pairs)} pair(s) checked; {failures} failed.", failed=failures)
             _exit_failure()
         print("All checks passed.")
     elif args.output_format == "json":

@@ -158,6 +158,41 @@ Use when you need **zero or minimal downtime** and can change the application.
 
 Rollback: point reads (and writes if still dual-writing) back to OpenSearch until Elastic is fixed.
 
+## Running Logstash and validate_migration.py in parallel
+
+You can validate progress while Logstash is still running, but be aware of the following:
+
+**Elasticsearch `refresh_interval`**: By default, newly indexed documents are only visible to search after a refresh (default `1s`; set to `-1` during bulk migration). This means `validate_migration.py` may see a lower document count on the destination than actually exists on disk. This lag is typically under 1–5 seconds with default settings, but with `refresh_interval: -1` it will persist until you manually refresh.
+
+**Workflow:**
+
+```bash
+# Terminal 1: run Logstash (from Logstash_input/)
+docker compose up --build
+
+# Terminal 2: periodically check progress (run as many times as you like)
+python validate_migration.py \
+  --source-index logs-2024 \
+  --dest-index logs-2024 \
+  --source-host "$SOURCE_OPENSEARCH_HOST" \
+  --dest-host "$DEST_ELASTIC_HOST" \
+  --dest-api-key "$DEST_ELASTIC_API_KEY"
+```
+
+**Expected output during active migration:** count mismatches are normal until Logstash completes. Do not treat a `FAIL` during active Logstash runs as a problem — only the final validation after Logstash stops matters.
+
+**Forcing a refresh before final validation:**
+
+```bash
+# On the Elasticsearch destination, force all pending writes to be visible:
+curl -X POST "$DEST_ELASTIC_HOST/logs-2024/_refresh" \
+  -H "Authorization: ApiKey $DEST_ELASTIC_API_KEY"
+```
+
+Then re-run `validate_migration.py` for the final count check.
+
+**Using `--check-existence` during active migration:** safe to use at any point; it will confirm the index exists without blocking on counts.
+
 ## Rollback
 
 - **Reindex:** Delete the destination index on Elastic (e.g. `DELETE /destinationindexname`) and re-run the reindex.

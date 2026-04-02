@@ -14,17 +14,59 @@ import sys
 import time
 from typing import Any, Optional, Tuple
 
+import datetime
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
+
+_LOG_FORMAT_JSON = False
+
+
+def _cli_log(level: str, message: str, **extra) -> None:
+    if _LOG_FORMAT_JSON:
+        record = {
+            "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+            "level": level,
+            "message": message,
+        }
+        record.update(extra)
+        print(json.dumps(record), file=sys.stderr)
+    else:
+        suffix = "".join(f" {k}={v}" for k, v in extra.items())
+        print(f"{level.upper()}: {message}{suffix}", file=sys.stderr)
+
+
+def _make_session() -> requests.Session:
+    retry = Retry(
+        total=3,
+        backoff_factor=1,
+        status_forcelist=(429, 500, 502, 503, 504),
+        allowed_methods={"GET"},
+        raise_on_status=False,
+    )
+    adapter = HTTPAdapter(max_retries=retry)
+    session = requests.Session()
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    return session
+
+
+_SESSION = _make_session()
 
 
 def elastic_headers_auth(
-    api_key: Optional[str], user: Optional[str], password: Optional[str]
+    api_key: Optional[str],
+    user: Optional[str],
+    password: Optional[str],
+    api_key_encoded: bool = False,
 ) -> Tuple[dict, Optional[tuple]]:
     headers: dict = {}
     auth = None
     if api_key:
         key = api_key
-        if ":" in key and " " not in key:
+        if not api_key_encoded and ":" in key:
+            # Raw Elastic API keys are id:secret; Base64 alphabet never contains ":"
             key = base64.b64encode(key.encode()).decode()
         headers["Authorization"] = f"ApiKey {key}"
     elif user and password:
@@ -34,7 +76,7 @@ def elastic_headers_auth(
 
 def fetch_task(host: str, task_id: str, headers: dict, auth: Optional[tuple]) -> Any:
     url = host.rstrip("/") + "/_tasks/" + task_id
-    r = requests.get(url, headers=headers or None, auth=auth, timeout=60)
+    r = _SESSION.get(url, headers=headers or None, auth=auth, timeout=60)
     r.raise_for_status()
     return r.json()
 
@@ -57,6 +99,12 @@ def main():
     )
     parser.add_argument(
         "--dest-api-key", default=os.environ.get("DEST_ELASTIC_API_KEY"), help="Elastic API key"
+    )
+    parser.add_argument(
+        "--dest-api-key-encoded",
+        action="store_true",
+        default=os.environ.get("DEST_ELASTIC_API_KEY_ENCODED", "").lower() in ("1", "true", "yes"),
+        help="Indicate that --dest-api-key is already Base64-encoded (skip automatic encoding).",
     )
     parser.add_argument(
         "--dest-user", default=os.environ.get("DEST_ELASTIC_USER"), help="Elastic user"
@@ -82,6 +130,17 @@ def main():
         help="Print raw JSON each poll.",
     )
     parser.add_argument(
+        "--json-progress",
+        action="store_true",
+        help="Emit one JSON line per poll with timestamp, status, created, and total (useful for CI/dashboards).",
+    )
+    parser.add_argument(
+        "--log-format",
+        choices=("text", "json"),
+        default="text",
+        help="Stderr log format: text (default) or json (one JSON object per line).",
+    )
+    parser.add_argument(
         "--strict-exit-codes",
         action="store_true",
         help="0=success, 1=task/reindex failure, 2=timeout or argparse, 3=HTTP/network error on poll.",
@@ -97,24 +156,53 @@ def main():
     if task_id.startswith("task:"):
         task_id = task_id[5:]
 
-    headers, auth = elastic_headers_auth(args.dest_api_key, args.dest_user, args.dest_password)
+    global _LOG_FORMAT_JSON
+    _LOG_FORMAT_JSON = args.log_format == "json"
+
+    headers, auth = elastic_headers_auth(
+        args.dest_api_key, args.dest_user, args.dest_password, args.dest_api_key_encoded
+    )
 
     deadline = time.monotonic() + args.timeout
     last_json = None
+    consecutive_errors = 0
+    _MAX_CONSECUTIVE_ERRORS = 5
 
     while time.monotonic() < deadline:
         try:
             last_json = fetch_task(args.dest_host, task_id, headers, auth)
+            consecutive_errors = 0
         except requests.RequestException as e:
-            print(f"Request failed: {e}", file=sys.stderr)
+            consecutive_errors += 1
+            msg = str(e)
             if hasattr(e, "response") and e.response is not None:
-                print(e.response.text[:1000], file=sys.stderr)
-            sys.exit(3 if args.strict_exit_codes else 1)
+                msg += f" — {e.response.text[:500]}"
+            _cli_log("warn", f"Request failed ({consecutive_errors}/{_MAX_CONSECUTIVE_ERRORS}): {msg}")
+            if consecutive_errors >= _MAX_CONSECUTIVE_ERRORS:
+                _cli_log("error", f"Aborting after {_MAX_CONSECUTIVE_ERRORS} consecutive request failures.")
+                sys.exit(3 if args.strict_exit_codes else 1)
+            time.sleep(args.interval)
+            continue
 
         if args.verbose:
             print(json.dumps(last_json, indent=2))
 
         completed = last_json.get("completed", False)
+        status = last_json.get("status", {})
+        _total = status.get("total", "?") if isinstance(status, dict) else "?"
+        _created = status.get("created", "?") if isinstance(status, dict) else "?"
+
+        if args.json_progress:
+            import datetime
+            progress = {
+                "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+                "task_id": task_id,
+                "status": "completed" if completed else "running",
+                "total": _total,
+                "created": _created,
+            }
+            print(json.dumps(progress), flush=True)
+
         if completed:
             error = last_json.get("error")
             response = last_json.get("response", {})
@@ -131,18 +219,17 @@ def main():
             print("Task completed successfully.")
             if isinstance(response, dict) and "total" in response:
                 print(
-                    f"Total: {response.get('total')} created: {response.get('created')} updated: {response.get('updated')} deleted: {response.get('deleted')}"
+                    f"Total: {response.get('total')} created: {response.get('created')} "
+                    f"updated: {response.get('updated')} deleted: {response.get('deleted')}"
                 )
             sys.exit(0)
 
-        status = last_json.get("status", {})
-        if isinstance(status, dict):
-            desc = status.get("description", "")
-            total = status.get("total", "?")
-            created = status.get("created", "?")
-            print(f"Still running… total={total} created={created} {desc[:80]}", flush=True)
-        else:
-            print("Still running…", flush=True)
+        if not args.json_progress:
+            if isinstance(status, dict):
+                desc = status.get("description", "")
+                print(f"Still running… total={_total} created={_created} {desc[:80]}", flush=True)
+            else:
+                print("Still running…", flush=True)
 
         time.sleep(args.interval)
 

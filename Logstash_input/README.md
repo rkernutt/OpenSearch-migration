@@ -99,11 +99,51 @@ Elasticsearch does not guarantee global write order across shards. If **updates 
 
 For Kafka-mediated flows and **partition keys**, see [docs/KAFKA_MIGRATION.md](../docs/KAFKA_MIGRATION.md).
 
-## Large indices and resilience
+## Large indices, resilience, and backpressure
 
 - Prefer a **bounded query** in a custom pipeline for incremental runs (time range, etc.).
 - Increase heap if needed by extending `docker-compose.yml` `environment` with `LS_JAVA_OPTS` or adding it to `.env` and referencing it in compose (ensure compose passes it through—today compose does not fix `LS_JAVA_OPTS`; add under `environment:` if you need it).
 - Configure the Elasticsearch output **retry** options per [Elastic documentation](https://www.elastic.co/guide/en/logstash/current/plugins-outputs-elasticsearch.html); consider enabling the **dead letter queue** in `logstash.yml` for poison documents.
+
+### Handling backpressure and bulk rejections
+
+When Elasticsearch rejects bulk requests (HTTP 429 or `EsRejectedExecutionException`), Logstash will retry automatically if the output plugin's retry settings are configured. Signs of backpressure:
+
+- Logstash logs show `[retrying failed action with response code: 429]`
+- Throughput drops or pipeline stalls
+- Elasticsearch `GET _nodes/hot_threads` shows high threadpool queue depth
+
+**Tuning steps (in order):**
+
+1. **Reduce batch size.** In `docker-compose.yml` or `logstash.yml`, lower `pipeline.batch.size` (default 125). Smaller batches reduce memory pressure on Elasticsearch.
+   ```yaml
+   environment:
+     - PIPELINE_BATCH_SIZE=50
+   ```
+
+2. **Slow the input.** Add a throttle or increase `pipeline.batch.delay` to give Elasticsearch time to catch up.
+
+3. **Reduce replicas during migration.** On the destination index:
+   ```json
+   PUT /destination-index/_settings
+   { "index": { "number_of_replicas": 0 } }
+   ```
+   Restore replicas after migration is complete.
+
+4. **Increase `refresh_interval`.** A value of `-1` (disable) or `30s` during migration avoids frequent segment merges:
+   ```json
+   PUT /destination-index/_settings
+   { "index": { "refresh_interval": "30s" } }
+   ```
+
+5. **Check JVM heap on Elasticsearch.** If heap usage is consistently >75%, consider scaling the cluster before continuing the migration.
+
+6. **Enable the dead letter queue (DLQ)** in `logstash.yml` so poison documents (mapping errors, oversized docs) do not block the pipeline:
+   ```yaml
+   dead_letter_queue.enable: true
+   dead_letter_queue.max_bytes: 1gb
+   ```
+   Review DLQ entries with the `dead_letter_queue` input plugin after migration.
 
 ## Multiple indices
 

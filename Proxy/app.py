@@ -2,10 +2,23 @@
 HTTP reverse proxy for Amazon OpenSearch Service (VPC endpoint).
 Accepts OpenSearch-style API requests, signs them with SigV4, and forwards to the VPC endpoint.
 Optional basic auth on the proxy for public exposure (e.g. Elastic Cloud reindex).
+
+Environment variables:
+  OPENSEARCH_ENDPOINT   Required. VPC endpoint URL.
+  AWS_REGION            AWS region (default: us-east-1).
+  PROXY_USER            Optional basic-auth username for inbound requests.
+  PROXY_PASSWORD        Optional basic-auth password for inbound requests.
+  PROXY_MAX_BODY_MB     Max request body size in MB (default: 100).
+  PROXY_VERIFY_TLS      Set to "false" to disable TLS verification (default: true).
+  PROXY_CA_BUNDLE       Path to a CA bundle file for TLS verification.
+  PROXY_DEBUG           Set to "1" to log method/path/status/latency (no bodies).
+  PROXY_LISTEN          host:port to bind (default: 0.0.0.0:9200).
 """
 
+import logging
 import os
 import sys
+import time
 from pathlib import Path
 
 _root = Path(__file__).resolve().parents[1]
@@ -34,20 +47,43 @@ AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
 PROXY_USER = os.environ.get("PROXY_USER", "")
 PROXY_PASSWORD = os.environ.get("PROXY_PASSWORD", "")
 
+# TLS verification: PROXY_VERIFY_TLS=false disables; PROXY_CA_BUNDLE sets a custom CA bundle.
+_verify_tls_env = os.environ.get("PROXY_VERIFY_TLS", "true").lower()
+if _verify_tls_env in ("0", "false", "no"):
+    PROXY_TLS_VERIFY: object = False
+elif os.environ.get("PROXY_CA_BUNDLE"):
+    PROXY_TLS_VERIFY = os.environ["PROXY_CA_BUNDLE"]
+else:
+    PROXY_TLS_VERIFY = True
+
+PROXY_DEBUG = os.environ.get("PROXY_DEBUG", "0") in ("1", "true", "yes")
+
 # Headers we forward from client to OpenSearch (lowercase keys)
 FORWARD_REQUEST_HEADERS = {"content-type", "accept", "accept-encoding"}
 # Headers we forward from OpenSearch response to client
 FORWARD_RESPONSE_HEADERS = {"content-type", "content-length", "accept-ranges"}
 
+if PROXY_DEBUG:
+    logging.basicConfig(level=logging.DEBUG, format="%(asctime)s %(levelname)s %(message)s")
+    _log = logging.getLogger("proxy")
+else:
+    _log = logging.getLogger("proxy")
 
-def _get_sigv4_auth():
+
+def _get_sigv4_auth() -> AWS4Auth:
     credentials = boto3.Session().get_credentials()
+    if credentials is None:
+        raise ValueError(
+            "AWS credentials not found. Set AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY, "
+            "assign an IAM role, or configure an AWS profile."
+        )
+    resolved = credentials.resolve()
     return AWS4Auth(
-        credentials.access_key,
-        credentials.secret_key,
+        resolved.access_key,
+        resolved.secret_key,
         AWS_REGION,
         "es",
-        session_token=credentials.token,
+        session_token=resolved.token,
     )
 
 
@@ -102,6 +138,7 @@ def proxy(path: str):
     auth = _get_sigv4_auth()
     stream = request.method in ("GET", "HEAD")
 
+    t0 = time.monotonic()
     try:
         resp = requests.request(
             request.method,
@@ -112,9 +149,16 @@ def proxy(path: str):
             stream=stream,
             timeout=60,
             allow_redirects=False,
+            verify=PROXY_TLS_VERIFY,
         )
     except requests.RequestException as e:
+        if PROXY_DEBUG:
+            _log.debug("PROXY %s %s ERROR %s", request.method, path, e)
         return str(e), 502
+
+    if PROXY_DEBUG:
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        _log.debug("PROXY %s %s -> %s (%dms)", request.method, path, resp.status_code, elapsed_ms)
 
     response_headers = _forward_headers_from_response(resp)
 
@@ -131,6 +175,12 @@ def proxy(path: str):
             headers=response_headers,
         )
     return Response(resp.content, status=resp.status_code, headers=response_headers)
+
+
+@app.route("/health", methods=["GET"])
+def health():
+    """Lightweight health check for ALB/load-balancer probes. No SigV4 required."""
+    return {"status": "ok"}, 200
 
 
 def main():
