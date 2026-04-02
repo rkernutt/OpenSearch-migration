@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 from validate_migration import DestAuth, verify_ids_mget_elastic
 
 
-@patch("validate_migration.requests.post")
+@patch("validate_migration._SESSION.post")
 def test_mget_counts_found_and_missing(mock_post: MagicMock) -> None:
     mock_post.return_value.json.return_value = {
         "docs": [
