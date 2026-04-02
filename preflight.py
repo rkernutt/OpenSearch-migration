@@ -29,7 +29,13 @@ def main() -> None:
 
     bootstrap_env.load()
 
-    from validate_migration import DestAuth, opensearch_auth_sigv4, _SESSION, _TIMEOUT_SHORT, _redact_response_text
+    from validate_migration import (
+        _SESSION,
+        _TIMEOUT_SHORT,
+        DestAuth,
+        _redact_response_text,
+        opensearch_auth_sigv4,
+    )
 
     parser = argparse.ArgumentParser(
         description="Preflight: ping OpenSearch + Elastic; optional index HEAD and optional count equality."
@@ -168,7 +174,9 @@ def main() -> None:
                 auth = opensearch_auth_sigv4(args.source_region)
                 h = _SESSION.head(url, auth=auth, timeout=_TIMEOUT_SHORT)
             else:
-                h = _SESSION.head(url, auth=(args.source_user, args.source_password), timeout=_TIMEOUT_SHORT)
+                h = _SESSION.head(
+                    url, auth=(args.source_user, args.source_password), timeout=_TIMEOUT_SHORT
+                )
             if h.status_code == 404:
                 fail(f"source index '{args.source_index}' not found on {args.source_host}")
             h.raise_for_status()

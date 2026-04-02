@@ -15,10 +15,10 @@ from validate_migration import (
     validate_index_name,
 )
 
-
 # ---------------------------------------------------------------------------
 # validate_index_name
 # ---------------------------------------------------------------------------
+
 
 def test_valid_names() -> None:
     for name in ("my-index", "logs-2024.01.01", "metrics_v2", "index123"):
@@ -68,6 +68,7 @@ def test_empty_rejected() -> None:
 # _redact_response_text
 # ---------------------------------------------------------------------------
 
+
 def test_redact_apikey_header() -> None:
     text = 'error: {"Authorization": "ApiKey abc123XYZlongtoken=="}'
     result = _redact_response_text(text)
@@ -97,6 +98,7 @@ def test_redact_long_base64() -> None:
 # ---------------------------------------------------------------------------
 # DestAuth — api_key_encoded flag
 # ---------------------------------------------------------------------------
+
 
 def test_dest_auth_raw_key_encoded() -> None:
     """Raw id:secret format should be Base64-encoded automatically."""
@@ -141,6 +143,7 @@ def test_dest_auth_no_creds_returns_empty() -> None:
 # elastic_headers_auth from poll_reindex_task
 # ---------------------------------------------------------------------------
 
+
 def test_poll_elastic_headers_raw_key() -> None:
     from poll_reindex_task import elastic_headers_auth
 
@@ -170,6 +173,7 @@ def test_poll_elastic_headers_basic() -> None:
 # ---------------------------------------------------------------------------
 # validate_pair — early exit on invalid index name
 # ---------------------------------------------------------------------------
+
 
 def test_validate_pair_rejects_uppercase_source() -> None:
     from validate_migration import DestAuth, validate_pair

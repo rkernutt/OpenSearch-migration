@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import base64
 import csv
+import datetime
 import io
 import json
 import os
@@ -20,11 +21,10 @@ import sys
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
-import datetime
 import requests
 from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
 from requests_aws4auth import AWS4Auth
+from urllib3.util.retry import Retry
 
 try:
     import boto3
@@ -34,7 +34,7 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # Configurable timeouts (override via environment variables)
 # ---------------------------------------------------------------------------
-_TIMEOUT_SHORT = int(os.environ.get("VALIDATION_TIMEOUT_SHORT", "30"))   # HEAD, GET _count
+_TIMEOUT_SHORT = int(os.environ.get("VALIDATION_TIMEOUT_SHORT", "30"))  # HEAD, GET _count
 _TIMEOUT_SEARCH = int(os.environ.get("VALIDATION_TIMEOUT_SEARCH", "120"))  # POST _search, _mget
 
 
@@ -45,7 +45,7 @@ def _make_session() -> requests.Session:
     """
     retry = Retry(
         total=3,
-        backoff_factor=1,          # 0s, 1s, 2s between attempts
+        backoff_factor=1,  # 0s, 1s, 2s between attempts
         status_forcelist=(429, 500, 502, 503, 504),
         allowed_methods={"GET", "HEAD", "POST"},
         raise_on_status=False,
@@ -86,7 +86,7 @@ def _cli_log(level: str, message: str, **extra) -> None:
 @dataclass
 class DestAuth:
     api_key: Optional[str] = None
-    api_key_encoded: bool = False   # True = key is already Base64-encoded
+    api_key_encoded: bool = False  # True = key is already Base64-encoded
     user: Optional[str] = None
     password: Optional[str] = None
 
@@ -551,7 +551,11 @@ def validate_pair(
                     return False, f"Source index does not exist: {source_index}", "validation"
             else:
                 if source_user is None or source_password is None:
-                    return False, "OpenSearch user and password are required when not using SigV4", "validation"
+                    return (
+                        False,
+                        "OpenSearch user and password are required when not using SigV4",
+                        "validation",
+                    )
                 if not head_index_opensearch_basic(
                     source_host, source_index, source_user, source_password
                 ):
@@ -563,7 +567,11 @@ def validate_pair(
             source_count = get_count_opensearch_sigv4(source_host, source_index, source_region)
         else:
             if source_user is None or source_password is None:
-                return False, "OpenSearch user and password are required when not using SigV4", "validation"
+                return (
+                    False,
+                    "OpenSearch user and password are required when not using SigV4",
+                    "validation",
+                )
             source_count = get_count_opensearch_basic(
                 source_host, source_index, source_user, source_password
             )
@@ -596,7 +604,11 @@ def validate_pair(
                 )
             else:
                 if source_user is None or source_password is None:
-                    return False, "OpenSearch user and password are required when not using SigV4", "validation"
+                    return (
+                        False,
+                        "OpenSearch user and password are required when not using SigV4",
+                        "validation",
+                    )
                 ids = sample_doc_ids_opensearch_basic(
                     source_host,
                     source_index,

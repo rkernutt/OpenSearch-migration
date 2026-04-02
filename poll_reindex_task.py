@@ -8,17 +8,16 @@ from __future__ import annotations
 
 import argparse
 import base64
+import datetime
 import json
 import os
 import sys
 import time
 from typing import Any, Optional, Tuple
 
-import datetime
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-
 
 _LOG_FORMAT_JSON = False
 
@@ -177,9 +176,14 @@ def main():
             msg = str(e)
             if hasattr(e, "response") and e.response is not None:
                 msg += f" — {e.response.text[:500]}"
-            _cli_log("warn", f"Request failed ({consecutive_errors}/{_MAX_CONSECUTIVE_ERRORS}): {msg}")
+            _cli_log(
+                "warn", f"Request failed ({consecutive_errors}/{_MAX_CONSECUTIVE_ERRORS}): {msg}"
+            )
             if consecutive_errors >= _MAX_CONSECUTIVE_ERRORS:
-                _cli_log("error", f"Aborting after {_MAX_CONSECUTIVE_ERRORS} consecutive request failures.")
+                _cli_log(
+                    "error",
+                    f"Aborting after {_MAX_CONSECUTIVE_ERRORS} consecutive request failures.",
+                )
                 sys.exit(3 if args.strict_exit_codes else 1)
             time.sleep(args.interval)
             continue
@@ -194,6 +198,7 @@ def main():
 
         if args.json_progress:
             import datetime
+
             progress = {
                 "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
                 "task_id": task_id,
