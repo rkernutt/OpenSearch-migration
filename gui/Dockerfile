@@ -3,9 +3,9 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-# Install dependencies (cache layer)
-COPY package.json ./
-RUN npm install
+# Install dependencies (cache layer — uses npm ci when lock file is present)
+COPY package.json package-lock.json* ./
+RUN [ -f package-lock.json ] && npm ci --prefer-offline || npm install
 
 # Copy source and build
 COPY . .
