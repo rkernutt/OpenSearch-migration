@@ -3,4 +3,4 @@ flask>=2.3.0,<4
 requests>=2.28.0,<3
 requests-aws4auth>=1.1.0,<2
 boto3>=1.26.0,<2
-gunicorn>=21.0.0,<24
+gunicorn>=21.0.0,<26
