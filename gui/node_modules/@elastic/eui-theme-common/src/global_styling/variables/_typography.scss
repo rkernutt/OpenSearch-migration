@@ -1,0 +1,8 @@
+// Families
+$euiCodeFontFamily: 'Roboto Mono', Menlo, Courier, monospace !default;
+
+// Careful using ligatures. Code editors like ACE will often error because of width calculations
+$euiFontFeatureSettings: 'calt' 1, 'kern' 1, 'liga' 1 !default;
+
+// Line height
+$euiLineHeight:     1.5 !default;
