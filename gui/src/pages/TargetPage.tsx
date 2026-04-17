@@ -33,13 +33,14 @@ interface TargetPageProps {
 }
 
 const TARGET_TYPE_OPTIONS = [
-  { id: "cloud_hosted",    label: "Cloud Hosted"    },
+  { id: "cloud_hosted", label: "Cloud Hosted" },
   { id: "cloud_serverless", label: "Cloud Serverless" },
-  { id: "self_managed",    label: "Self-Managed"    },
+  { id: "self_managed", label: "Self-Managed" },
 ];
 
 function esUrlPlaceholder(type: TargetType): string {
-  if (type === "cloud_hosted")    return "https://my-deployment.es.us-east-1.aws.elastic-cloud.com:9243";
+  if (type === "cloud_hosted")
+    return "https://my-deployment.es.us-east-1.aws.elastic-cloud.com:9243";
   if (type === "cloud_serverless") return "https://my-project.es.us-east-2.aws.elastic.cloud";
   return "http://localhost:9200";
 }
@@ -73,9 +74,8 @@ export function TargetPage({
           <EuiLink href="https://cloud.elastic.co" target="_blank" external>
             Elastic Cloud
           </EuiLink>{" "}
-          &rarr;{" "}
-          {targetType === "cloud_serverless" ? "Project" : "Deployment"}{" "}
-          &rarr; Security &rarr; API Keys.
+          &rarr; {targetType === "cloud_serverless" ? "Project" : "Deployment"} &rarr; Security
+          &rarr; API Keys.
         </>
       )}
     </>
@@ -124,10 +124,7 @@ export function TargetPage({
 
         <EuiSpacer size="l" />
 
-        <EuiFormRow
-          label="Elasticsearch URL"
-          helpText={`e.g. ${esUrlPlaceholder(targetType)}`}
-        >
+        <EuiFormRow label="Elasticsearch URL" helpText={`e.g. ${esUrlPlaceholder(targetType)}`}>
           <EuiFieldText
             value={targetUrl}
             onChange={(e) => onUrlChange(e.target.value)}

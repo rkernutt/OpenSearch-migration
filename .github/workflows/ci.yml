@@ -44,6 +44,32 @@ jobs:
           pip install pip-audit
           pip-audit -r requirements.txt -r requirements-dev.txt
 
+  gui:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: gui
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: gui/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: ESLint
+        run: npm run lint
+
+      - name: Prettier
+        run: npm run format:check
+
+      - name: TypeScript
+        run: npm run typecheck
+
   gitleaks:
     runs-on: ubuntu-latest
     steps:

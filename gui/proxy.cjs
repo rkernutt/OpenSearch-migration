@@ -77,7 +77,11 @@ function esGet(rawUrl, path, headers) {
       res.on("end", () => {
         try {
           const body = JSON.parse(Buffer.concat(chunks).toString());
-          resolve({ ok: res.statusCode >= 200 && res.statusCode < 300, status: res.statusCode, body });
+          resolve({
+            ok: res.statusCode >= 200 && res.statusCode < 300,
+            status: res.statusCode,
+            body,
+          });
         } catch {
           resolve({ ok: false, status: res.statusCode, body: { error: "Non-JSON response" } });
         }
@@ -86,7 +90,11 @@ function esGet(rawUrl, path, headers) {
 
     req.on("timeout", () => {
       req.destroy();
-      resolve({ ok: false, status: 0, body: { error: "Connection timed out after " + TIMEOUT_MS / 1000 + "s" } });
+      resolve({
+        ok: false,
+        status: 0,
+        body: { error: "Connection timed out after " + TIMEOUT_MS / 1000 + "s" },
+      });
     });
 
     req.on("error", (err) => {
@@ -131,10 +139,7 @@ async function handleTestSource(req, res) {
   }
 
   const errorMsg =
-    respBody?.error?.reason ??
-    respBody?.error ??
-    respBody?.message ??
-    `HTTP ${status}`;
+    respBody?.error?.reason ?? respBody?.error ?? respBody?.message ?? `HTTP ${status}`;
   sendJson(res, status || 502, { error: String(errorMsg) });
 }
 
@@ -159,10 +164,7 @@ async function handleTestTarget(req, res) {
     return sendJson(res, 200, { version, clusterName });
   }
 
-  const errorMsg =
-    respBody?.error?.reason ??
-    respBody?.error ??
-    `HTTP ${status}`;
+  const errorMsg = respBody?.error?.reason ?? respBody?.error ?? `HTTP ${status}`;
   sendJson(res, status || 502, { error: String(errorMsg) });
 }
 
@@ -185,15 +187,18 @@ async function handleIndices(req, res) {
   }
 
   // _cat/indices gives us name + doc count + store size
-  const { ok, status, body: respBody } = await esGet(
+  const {
+    ok,
+    status,
+    body: respBody,
+  } = await esGet(
     endpoint,
     "/_cat/indices?format=json&bytes=b&h=index,docs.count,store.size",
-    headers
+    headers,
   );
 
   if (!ok) {
-    const errorMsg =
-      respBody?.error?.reason ?? respBody?.error ?? `HTTP ${status}`;
+    const errorMsg = respBody?.error?.reason ?? respBody?.error ?? `HTTP ${status}`;
     return sendJson(res, status || 502, { error: String(errorMsg) });
   }
 
@@ -232,8 +237,7 @@ async function handleTestProxy(req, res) {
     return sendJson(res, 200, { version, clusterName });
   }
 
-  const errorMsg =
-    respBody?.error?.reason ?? respBody?.error ?? `HTTP ${status}`;
+  const errorMsg = respBody?.error?.reason ?? respBody?.error ?? `HTTP ${status}`;
   sendJson(res, status || 502, { error: String(errorMsg) });
 }
 
@@ -260,8 +264,8 @@ const server = http.createServer(async (req, res) => {
     try {
       if (req.url === "/api/test-source") return await handleTestSource(req, res);
       if (req.url === "/api/test-target") return await handleTestTarget(req, res);
-      if (req.url === "/api/indices")     return await handleIndices(req, res);
-      if (req.url === "/api/test-proxy")  return await handleTestProxy(req, res);
+      if (req.url === "/api/indices") return await handleIndices(req, res);
+      if (req.url === "/api/test-proxy") return await handleTestProxy(req, res);
     } catch (err) {
       return sendJson(res, 500, { error: err.message || "Internal server error" });
     }
@@ -271,7 +275,5 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, HOST, () => {
-  console.log(
-    `[migration-proxy] listening on ${HOST}:${PORT} (timeout ${TIMEOUT_MS / 1000}s)`
-  );
+  console.log(`[migration-proxy] listening on ${HOST}:${PORT} (timeout ${TIMEOUT_MS / 1000}s)`);
 });

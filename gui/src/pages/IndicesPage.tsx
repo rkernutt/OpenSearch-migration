@@ -85,7 +85,7 @@ export function IndicesPage({
   const [filter, setFilter] = useState("");
 
   const visible = availableIndices.filter((idx) =>
-    idx.name.toLowerCase().includes(filter.toLowerCase())
+    idx.name.toLowerCase().includes(filter.toLowerCase()),
   );
 
   const totalSelectedDocs = availableIndices
@@ -141,8 +141,8 @@ export function IndicesPage({
           <EuiSpacer size="m" />
           <EuiCallOut title="Could not load indices" color="warning" iconType="warning" size="s">
             <p>
-              {indicesError} — You can enter index names manually below, or ensure network access
-              to the source cluster.
+              {indicesError} — You can enter index names manually below, or ensure network access to
+              the source cluster.
             </p>
           </EuiCallOut>
         </>
@@ -259,10 +259,7 @@ export function IndicesPage({
         <EuiSpacer size="m" />
         <EuiFlexGroup gutterSize="l" responsive={false}>
           <EuiFlexItem style={{ maxWidth: 220 }}>
-            <EuiFormRow
-              label="Batch Size"
-              helpText="Documents per scroll page (scroll_size)"
-            >
+            <EuiFormRow label="Batch Size" helpText="Documents per scroll page (scroll_size)">
               <EuiFieldNumber
                 value={batchSize}
                 onChange={(e) => onBatchSizeChange(Number(e.target.value))}
@@ -273,10 +270,7 @@ export function IndicesPage({
             </EuiFormRow>
           </EuiFlexItem>
           <EuiFlexItem style={{ maxWidth: 220 }}>
-            <EuiFormRow
-              label="Slices"
-              helpText="Parallel reindex slices (auto = shard count)"
-            >
+            <EuiFormRow label="Slices" helpText="Parallel reindex slices (auto = shard count)">
               <EuiSelect
                 options={SLICES_OPTIONS}
                 value={slices}

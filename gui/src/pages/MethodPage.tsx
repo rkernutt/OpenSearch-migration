@@ -40,7 +40,11 @@ const METHODS: MethodCard[] = [
     description:
       "Use Elasticsearch's native _reindex API with a remote source pointing to OpenSearch. Elastic pulls data directly over HTTP/HTTPS.",
     icon: "indexOpen",
-    pros: ["No additional infrastructure", "Native Elastic feature", "Supports scripted transforms"],
+    pros: [
+      "No additional infrastructure",
+      "Native Elastic feature",
+      "Supports scripted transforms",
+    ],
     badge: { label: "Recommended", color: "success" },
   },
   {
@@ -107,11 +111,7 @@ export function MethodPage({
                 </EuiFlexGroup>
               }
               icon={
-                <EuiIcon
-                  type={m.icon}
-                  size="xl"
-                  color={method === m.id ? "primary" : "subdued"}
-                />
+                <EuiIcon type={m.icon} size="xl" color={method === m.id ? "primary" : "subdued"} />
               }
               description={
                 <>
@@ -156,11 +156,7 @@ export function MethodPage({
         {isVpcProxy && (
           <>
             <EuiSpacer size="m" />
-            <EuiCallOut
-              color="primary"
-              size="s"
-              iconType="securityApp"
-            >
+            <EuiCallOut color="primary" size="s" iconType="securityApp">
               <p>{VPC_PROXY_CALLOUT[method]}</p>
             </EuiCallOut>
             <EuiSpacer size="s" />

@@ -17,10 +17,8 @@ import {
   EuiCodeBlock,
   EuiHorizontalRule,
   EuiSelect,
-  EuiFieldPassword,
   EuiBadge,
   EuiIcon,
-  EuiCopy,
 } from "@elastic/eui";
 
 interface ProxyDeployPageProps {
@@ -207,7 +205,13 @@ aws cloudformation describe-stacks \\
             </p>
           </EuiText>
           <EuiSpacer size="m" />
-          <EuiCodeBlock language="bash" fontSize="s" paddingSize="m" isCopyable overflowHeight={180}>
+          <EuiCodeBlock
+            language="bash"
+            fontSize="s"
+            paddingSize="m"
+            isCopyable
+            overflowHeight={180}
+          >
             {cfnDeployCmd}
           </EuiCodeBlock>
           <EuiSpacer size="m" />
@@ -219,12 +223,7 @@ aws cloudformation describe-stacks \\
             {cfnOutputCmd}
           </EuiCodeBlock>
           <EuiSpacer size="m" />
-          <EuiCallOut
-            title="What gets deployed?"
-            color="primary"
-            iconType="iInCircle"
-            size="s"
-          >
+          <EuiCallOut title="What gets deployed?" color="primary" iconType="iInCircle" size="s">
             <EuiText size="xs">
               <ul style={{ paddingLeft: 16, margin: 0 }}>
                 <li>EC2 Auto Scaling Group (1 instance, Amazon Linux 2023, IMDSv2)</li>
@@ -237,9 +236,10 @@ aws cloudformation describe-stacks \\
           </EuiCallOut>
         </>
       ),
-      status: proxyStatus === "deployed" || proxyStatus === "confirmed" || proxyStatus === "testing"
-        ? ("complete" as const)
-        : ("incomplete" as const),
+      status:
+        proxyStatus === "deployed" || proxyStatus === "confirmed" || proxyStatus === "testing"
+          ? ("complete" as const)
+          : ("incomplete" as const),
     },
     {
       title: "Enter proxy endpoint and verify connectivity",
@@ -315,8 +315,8 @@ aws cloudformation describe-stacks \\
                   <EuiText size="s">
                     <p>{proxyTestMsg}</p>
                     <p>
-                      Ensure the proxy EC2 instance is running, the NLB target is healthy, and
-                      this machine is in the allowed CIDR range ({allowedCidr || "10.0.0.0/8"}).
+                      Ensure the proxy EC2 instance is running, the NLB target is healthy, and this
+                      machine is in the allowed CIDR range ({allowedCidr || "10.0.0.0/8"}).
                     </p>
                   </EuiText>
                 </EuiCallOut>
@@ -325,9 +325,7 @@ aws cloudformation describe-stacks \\
           </EuiPanel>
         </>
       ),
-      status: proxyStatus === "confirmed"
-        ? ("complete" as const)
-        : ("incomplete" as const),
+      status: proxyStatus === "confirmed" ? ("complete" as const) : ("incomplete" as const),
     },
   ];
 
@@ -346,19 +344,13 @@ aws cloudformation describe-stacks \\
 
       <EuiText color="subdued" size="s">
         <p>
-          Deploy an nginx reverse proxy inside your VPC to bridge the private OpenSearch cluster
-          to Elastic Cloud. This enables migration from environments with no direct internet
-          egress.
+          Deploy an nginx reverse proxy inside your VPC to bridge the private OpenSearch cluster to
+          Elastic Cloud. This enables migration from environments with no direct internet egress.
         </p>
       </EuiText>
       <EuiSpacer size="l" />
 
-      <EuiCallOut
-        title="Architecture overview"
-        color="primary"
-        iconType="securityApp"
-        size="s"
-      >
+      <EuiCallOut title="Architecture overview" color="primary" iconType="securityApp" size="s">
         <EuiText size="s">
           <p>
             <strong>Migration tool</strong> (inside VPC)

@@ -116,15 +116,15 @@ export default function App() {
         const data = await resp.json();
         setSourceStatus("ok");
         setSourceMsg(
-          `Connected — OpenSearch ${data.version ?? "unknown"}${data.clusterName ? ` · ${data.clusterName}` : ""}`
+          `Connected — OpenSearch ${data.version ?? "unknown"}${data.clusterName ? ` · ${data.clusterName}` : ""}`,
         );
       } else {
         const data = await resp.json().catch(() => ({}));
         setSourceStatus("fail");
         setSourceMsg(data.error ?? `HTTP ${resp.status}`);
       }
-    } catch (e: any) {
-      if (e?.name === "TypeError" || e?.name === "AbortError") {
+    } catch (e) {
+      if (e instanceof Error && (e.name === "TypeError" || e.name === "AbortError")) {
         try {
           new URL(sourceEndpoint);
           setSourceStatus("ok");
@@ -135,7 +135,7 @@ export default function App() {
         }
       } else {
         setSourceStatus("fail");
-        setSourceMsg(e?.message ?? "Connection failed");
+        setSourceMsg(e instanceof Error ? e.message : "Connection failed");
       }
     }
   }
@@ -154,15 +154,15 @@ export default function App() {
         const data = await resp.json();
         setTargetStatus("ok");
         setTargetMsg(
-          `Connected — Elasticsearch ${data.version ?? "unknown"}${data.clusterName ? ` · ${data.clusterName}` : ""}`
+          `Connected — Elasticsearch ${data.version ?? "unknown"}${data.clusterName ? ` · ${data.clusterName}` : ""}`,
         );
       } else {
         const data = await resp.json().catch(() => ({}));
         setTargetStatus("fail");
         setTargetMsg(data.error ?? `HTTP ${resp.status}`);
       }
-    } catch (e: any) {
-      if (e?.name === "TypeError" || e?.name === "AbortError") {
+    } catch (e) {
+      if (e instanceof Error && (e.name === "TypeError" || e.name === "AbortError")) {
         try {
           new URL(targetUrl);
           setTargetStatus("ok");
@@ -173,7 +173,7 @@ export default function App() {
         }
       } else {
         setTargetStatus("fail");
-        setTargetMsg(e?.message ?? "Connection failed");
+        setTargetMsg(e instanceof Error ? e.message : "Connection failed");
       }
     }
   }
@@ -194,16 +194,16 @@ export default function App() {
         const data = await resp.json();
         setProxyStatus("confirmed");
         setProxyTestMsg(
-          `Proxy reachable — forwarding to Elasticsearch ${data.version ?? "unknown"}${data.clusterName ? ` · ${data.clusterName}` : ""}`
+          `Proxy reachable — forwarding to Elasticsearch ${data.version ?? "unknown"}${data.clusterName ? ` · ${data.clusterName}` : ""}`,
         );
       } else {
         const data = await resp.json().catch(() => ({}));
         setProxyStatus("failed");
         setProxyTestMsg(data.error ?? `HTTP ${resp.status}`);
       }
-    } catch (e: any) {
+    } catch (e) {
       setProxyStatus("failed");
-      setProxyTestMsg(e?.message ?? "Could not reach proxy endpoint");
+      setProxyTestMsg(e instanceof Error ? e.message : "Could not reach proxy endpoint");
     }
   }
 
@@ -246,7 +246,7 @@ export default function App() {
 
   function handleToggleIndex(name: string) {
     setSelectedIndices((prev) =>
-      prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name]
+      prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name],
     );
   }
 
@@ -385,9 +385,9 @@ export default function App() {
 
 // Sample indices shown when proxy server is unavailable
 const SAMPLE_INDICES: IndexInfo[] = [
-  { name: "logs-app-2024",   docCount: 4_820_000,  sizeBytes: 3_221_225_472 },
-  { name: "logs-app-2023",   docCount: 12_100_000, sizeBytes: 8_589_934_592 },
-  { name: "metrics-system",  docCount: 920_000,    sizeBytes: 524_288_000  },
-  { name: "apm-traces",      docCount: 2_400_000,  sizeBytes: 2_147_483_648 },
-  { name: "security-events", docCount: 380_000,    sizeBytes: 268_435_456  },
+  { name: "logs-app-2024", docCount: 4_820_000, sizeBytes: 3_221_225_472 },
+  { name: "logs-app-2023", docCount: 12_100_000, sizeBytes: 8_589_934_592 },
+  { name: "metrics-system", docCount: 920_000, sizeBytes: 524_288_000 },
+  { name: "apm-traces", docCount: 2_400_000, sizeBytes: 2_147_483_648 },
+  { name: "security-events", docCount: 380_000, sizeBytes: 268_435_456 },
 ];

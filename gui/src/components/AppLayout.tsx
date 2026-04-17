@@ -17,8 +17,8 @@ interface AppLayoutProps {
   activePage: string;
   onNavigate: (page: string) => void;
   children: React.ReactNode;
-  showProxyStep: boolean;   // true only for remote_reindex + isVpcProxy
-  isVpcProxyMode: boolean;  // true for any isVpcProxy
+  showProxyStep: boolean; // true only for remote_reindex + isVpcProxy
+  isVpcProxyMode: boolean; // true for any isVpcProxy
   sourceConnected: boolean;
   targetConnected: boolean;
   methodSelected: boolean;
@@ -28,19 +28,19 @@ interface AppLayoutProps {
 
 /** Steps when proxy_deploy step is needed (remote_reindex + isVpcProxy) */
 const WITH_PROXY_STEPS = [
-  { id: "source",       title: "Source"       },
-  { id: "target",       title: "Target"       },
-  { id: "method",       title: "Method"       },
+  { id: "source", title: "Source" },
+  { id: "target", title: "Target" },
+  { id: "method", title: "Method" },
   { id: "proxy_deploy", title: "Deploy Proxy" },
-  { id: "indices",      title: "Indices"      },
-  { id: "execute",      title: "Execute"      },
+  { id: "indices", title: "Indices" },
+  { id: "execute", title: "Execute" },
 ] as const;
 
 /** Standard 5-step flow */
 const STANDARD_STEPS = [
-  { id: "source",  title: "Source"  },
-  { id: "target",  title: "Target"  },
-  { id: "method",  title: "Method"  },
+  { id: "source", title: "Source" },
+  { id: "target", title: "Target" },
+  { id: "method", title: "Method" },
   { id: "indices", title: "Indices" },
   { id: "execute", title: "Execute" },
 ] as const;

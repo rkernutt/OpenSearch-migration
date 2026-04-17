@@ -1,6 +1,6 @@
 # Optional: development, CI, and local verification
 -r requirements.txt
-pytest>=7.0.0,<9
-ruff>=0.8.0,<0.15
+pytest>=7.0.0,<10
+ruff>=0.8.0,<0.16
 mypy>=1.8.0,<2
 types-requests>=2.31.0,<3

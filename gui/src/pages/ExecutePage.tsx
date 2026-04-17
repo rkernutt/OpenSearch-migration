@@ -45,10 +45,9 @@ interface ExecutePageProps {
 
 function genRemoteReindexDevTools(
   sourceEndpoint: string,
-  targetApiKey: string,
   indices: string[],
   batchSize: number,
-  slices: string
+  slices: string,
 ): string {
   return indices
     .map((idx) => {
@@ -78,7 +77,7 @@ function genRemoteReindexCurl(
   targetApiKey: string,
   indices: string[],
   batchSize: number,
-  slices: string
+  slices: string,
 ): string {
   return indices
     .map((idx) => {
@@ -109,7 +108,7 @@ function genLogstashDockerCompose(
   sourcePassword: string,
   targetUrl: string,
   targetApiKey: string,
-  indices: string[]
+  indices: string[],
 ): string {
   return `version: "3.8"
 services:
@@ -192,7 +191,7 @@ function genKafkaSinkConnector(targetUrl: string, targetApiKey: string, indices:
     "topics": "${indices.map((i) => `migration.${i}`).join(",")}",
     "connection.url": "${targetUrl}",
     "connection.username": "elastic",
-    "connection.password": "<FROM_API_KEY>",
+    "connection.password": "${targetApiKey}",
     "type.name": "_doc",
     "key.ignore": "true",
     "schema.ignore": "true",
@@ -216,8 +215,18 @@ function genLogstashVpcCfn(props: {
   sourceRegion: string;
 }): string {
   const {
-    vpcId, subnetId, sourceEndpoint, sourceAuthType, sourceUsername,
-    targetUrl, targetApiKey, indices, batchSize, instanceType, allowedCidr, sourceRegion,
+    vpcId,
+    subnetId,
+    sourceEndpoint,
+    sourceAuthType,
+    sourceUsername,
+    targetUrl,
+    targetApiKey,
+    indices,
+    batchSize,
+    instanceType,
+    allowedCidr,
+    sourceRegion,
   } = props;
   return `aws cloudformation deploy \\
   --template-file iac/cloudformation/vpc-logstash.yaml \\
@@ -250,8 +259,15 @@ function genKafkaVpcCfn(props: {
   sourceRegion: string;
 }): string {
   const {
-    vpcId, subnetId, sourceEndpoint, targetUrl, targetApiKey,
-    indices, instanceType, allowedCidr, sourceRegion,
+    vpcId,
+    subnetId,
+    sourceEndpoint,
+    targetUrl,
+    targetApiKey,
+    indices,
+    instanceType,
+    allowedCidr,
+    sourceRegion,
   } = props;
   return `aws cloudformation deploy \\
   --template-file iac/cloudformation/vpc-kafka.yaml \\
@@ -272,7 +288,7 @@ function genKafkaVpcCfn(props: {
 // ── Target type badge ─────────────────────────────────────────────────────────
 
 function targetTypeBadge(t: TargetType) {
-  if (t === "cloud_hosted")    return <EuiBadge color="primary">Cloud Hosted</EuiBadge>;
+  if (t === "cloud_hosted") return <EuiBadge color="primary">Cloud Hosted</EuiBadge>;
   if (t === "cloud_serverless") return <EuiBadge color="accent">Serverless</EuiBadge>;
   return <EuiBadge color="hollow">Self-Managed</EuiBadge>;
 }
@@ -292,7 +308,6 @@ export function ExecutePage({
   isVpcProxy,
   proxyEndpoint,
   selectedIndices,
-  availableIndices: _availableIndices,
   batchSize,
   slices,
   vpcId,
@@ -303,9 +318,7 @@ export function ExecutePage({
 }: ExecutePageProps) {
   // For remote_reindex + isVpcProxy: route commands through the proxy NLB endpoint
   const effectiveTargetUrl =
-    isVpcProxy && migrationMethod === "remote_reindex" && proxyEndpoint
-      ? proxyEndpoint
-      : targetUrl;
+    isVpcProxy && migrationMethod === "remote_reindex" && proxyEndpoint ? proxyEndpoint : targetUrl;
 
   const methodLabel: Record<MigrationMethod, string> = {
     remote_reindex: "Remote Reindex",
@@ -329,8 +342,14 @@ export function ExecutePage({
             </p>
           </EuiText>
           <EuiSpacer size="m" />
-          <EuiCodeBlock language="json" fontSize="s" paddingSize="m" isCopyable overflowHeight={400}>
-            {genRemoteReindexDevTools(sourceEndpoint, targetApiKey, selectedIndices, batchSize, slices)}
+          <EuiCodeBlock
+            language="json"
+            fontSize="s"
+            paddingSize="m"
+            isCopyable
+            overflowHeight={400}
+          >
+            {genRemoteReindexDevTools(sourceEndpoint, selectedIndices, batchSize, slices)}
           </EuiCodeBlock>
         </>
       ),
@@ -345,14 +364,20 @@ export function ExecutePage({
             <p>Run these commands from any machine with network access to both clusters.</p>
           </EuiText>
           <EuiSpacer size="m" />
-          <EuiCodeBlock language="bash" fontSize="s" paddingSize="m" isCopyable overflowHeight={400}>
+          <EuiCodeBlock
+            language="bash"
+            fontSize="s"
+            paddingSize="m"
+            isCopyable
+            overflowHeight={400}
+          >
             {genRemoteReindexCurl(
               sourceEndpoint,
               effectiveTargetUrl,
               targetApiKey,
               selectedIndices,
               batchSize,
-              slices
+              slices,
             )}
           </EuiCodeBlock>
         </>
@@ -368,7 +393,13 @@ export function ExecutePage({
       content: (
         <>
           <EuiSpacer size="m" />
-          <EuiCodeBlock language="yaml" fontSize="s" paddingSize="m" isCopyable overflowHeight={300}>
+          <EuiCodeBlock
+            language="yaml"
+            fontSize="s"
+            paddingSize="m"
+            isCopyable
+            overflowHeight={300}
+          >
             {genLogstashDockerCompose(
               sourceEndpoint,
               sourceAuthType,
@@ -376,7 +407,7 @@ export function ExecutePage({
               sourcePassword,
               targetUrl,
               targetApiKey,
-              selectedIndices
+              selectedIndices,
             )}
           </EuiCodeBlock>
         </>
@@ -390,12 +421,17 @@ export function ExecutePage({
           <EuiSpacer size="m" />
           <EuiText size="s" color="subdued">
             <p>
-              Save as <code>pipeline/logstash.conf</code> alongside{" "}
-              <code>docker-compose.yml</code>.
+              Save as <code>pipeline/logstash.conf</code> alongside <code>docker-compose.yml</code>.
             </p>
           </EuiText>
           <EuiSpacer size="m" />
-          <EuiCodeBlock language="ruby" fontSize="s" paddingSize="m" isCopyable overflowHeight={400}>
+          <EuiCodeBlock
+            language="ruby"
+            fontSize="s"
+            paddingSize="m"
+            isCopyable
+            overflowHeight={400}
+          >
             {genLogstashConf(sourceEndpoint, selectedIndices, batchSize)}
           </EuiCodeBlock>
         </>
@@ -431,7 +467,13 @@ docker compose logs -f logstash`}
             <p>Register this connector on your Kafka Connect cluster to read from OpenSearch.</p>
           </EuiText>
           <EuiSpacer size="m" />
-          <EuiCodeBlock language="json" fontSize="s" paddingSize="m" isCopyable overflowHeight={300}>
+          <EuiCodeBlock
+            language="json"
+            fontSize="s"
+            paddingSize="m"
+            isCopyable
+            overflowHeight={300}
+          >
             {genKafkaSourceConnector(sourceEndpoint, selectedIndices)}
           </EuiCodeBlock>
         </>
@@ -447,7 +489,13 @@ docker compose logs -f logstash`}
             <p>Register this connector to write consumed messages into Elasticsearch.</p>
           </EuiText>
           <EuiSpacer size="m" />
-          <EuiCodeBlock language="json" fontSize="s" paddingSize="m" isCopyable overflowHeight={300}>
+          <EuiCodeBlock
+            language="json"
+            fontSize="s"
+            paddingSize="m"
+            isCopyable
+            overflowHeight={300}
+          >
             {genKafkaSinkConnector(targetUrl, targetApiKey, selectedIndices)}
           </EuiCodeBlock>
         </>
@@ -558,8 +606,8 @@ docker compose logs -f logstash`}
                   size="s"
                 >
                   <p>
-                    Go back to the <strong>Deploy Proxy</strong> step to complete the
-                    CloudFormation deployment and enter the proxy endpoint.
+                    Go back to the <strong>Deploy Proxy</strong> step to complete the CloudFormation
+                    deployment and enter the proxy endpoint.
                   </p>
                 </EuiCallOut>
               )}
@@ -584,7 +632,13 @@ docker compose logs -f logstash`}
             iconType="pipelineApp"
           />
           <EuiSpacer size="m" />
-          <EuiCodeBlock language="bash" fontSize="s" paddingSize="m" isCopyable overflowHeight={300}>
+          <EuiCodeBlock
+            language="bash"
+            fontSize="s"
+            paddingSize="m"
+            isCopyable
+            overflowHeight={300}
+          >
             {genLogstashVpcCfn({
               vpcId,
               subnetId,
@@ -623,12 +677,7 @@ sudo tail -f /var/log/logstash/logstash-plain.log`}
       {/* ── kafka, no VPC ────────────────────────────────────────────── */}
       {migrationMethod === "kafka" && !isVpcProxy && (
         <>
-          <EuiCallOut
-            title="Prerequisites"
-            color="primary"
-            iconType="cluster"
-            size="s"
-          >
+          <EuiCallOut title="Prerequisites" color="primary" iconType="cluster" size="s">
             <p>
               Requires a running Kafka cluster with Kafka Connect and the{" "}
               <strong>Elasticsearch Sink Connector</strong> and an{" "}
@@ -649,7 +698,13 @@ sudo tail -f /var/log/logstash/logstash-plain.log`}
             iconType="cluster"
           />
           <EuiSpacer size="m" />
-          <EuiCodeBlock language="bash" fontSize="s" paddingSize="m" isCopyable overflowHeight={300}>
+          <EuiCodeBlock
+            language="bash"
+            fontSize="s"
+            paddingSize="m"
+            isCopyable
+            overflowHeight={300}
+          >
             {genKafkaVpcCfn({
               vpcId,
               subnetId,
@@ -664,7 +719,9 @@ sudo tail -f /var/log/logstash/logstash-plain.log`}
           </EuiCodeBlock>
           <EuiSpacer size="m" />
           <EuiText size="s" color="subdued">
-            <p>Chef installs Kafka Connect and configures source and sink connectors automatically.</p>
+            <p>
+              Chef installs Kafka Connect and configures source and sink connectors automatically.
+            </p>
           </EuiText>
         </>
       )}
