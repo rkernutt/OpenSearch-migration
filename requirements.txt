@@ -1,6 +1,6 @@
 # Python 3.9+ recommended (see docs/TESTING.md).
 # Upper bounds reduce surprise major upgrades in automation; bump after testing.
-boto3>=1.26.0,<2
+boto3>=1.42.93,<2
 requests>=2.28.0,<3
 requests-aws4auth>=1.1.0,<2
 python-dotenv>=1.0.0,<2
