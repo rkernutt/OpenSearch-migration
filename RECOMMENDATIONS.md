@@ -29,6 +29,12 @@ This page records **where each area was implemented** and tracks open items. Pol
 | Serverless (Elastic + OpenSearch) | [docs/SERVERLESS.md](docs/SERVERLESS.md) |
 | Dual-write & cutover | [RUNBOOK.md](RUNBOOK.md) |
 | Logstash Docker + `.env` | [Logstash_input/Dockerfile](Logstash_input/Dockerfile), [Logstash_input/docker-compose.yml](Logstash_input/docker-compose.yml), [Logstash_input/pipeline/](Logstash_input/pipeline/), [Logstash_input/README.md](Logstash_input/README.md) |
+| S3 staging path (extract / load / Logstash s3 / RFS wrapper) | [s3_migration/](s3_migration/), [Logstash_input/pipeline/logstash_s3.conf](Logstash_input/pipeline/logstash_s3.conf), [iac/terraform/rfs-fargate/](iac/terraform/rfs-fargate/), [docs/S3_MIGRATION.md](docs/S3_MIGRATION.md), [docs/RFS.md](docs/RFS.md), [tests/test_s3_common.py](tests/test_s3_common.py), [tests/test_s3_bulk_load.py](tests/test_s3_bulk_load.py), [tests/test_s3_extract.py](tests/test_s3_extract.py), [tests/test_rfs_runner.py](tests/test_rfs_runner.py) |
+| Parallel RFS fan-out (Step Functions) | [iac/terraform/rfs-orchestration/](iac/terraform/rfs-orchestration/), [docs/RFS.md](docs/RFS.md), `.github/workflows/ci.yml` (terraform validate step) |
+| Metadata migration & sanitizers (templates / pipelines / settings / mappings) | [metadata_migration/](metadata_migration/), [docs/METADATA_MIGRATION.md](docs/METADATA_MIGRATION.md), [tests/test_metadata_sanitizer.py](tests/test_metadata_sanitizer.py), [tests/test_metadata_migrator.py](tests/test_metadata_migrator.py); covers Serverless settings stripping and ES 5/6 multi-type → typeless mapping flatten |
+| Umbrella `migrate` CLI | [migrate.py](migrate.py), [docs/TOOLS.md](docs/TOOLS.md), `pyproject.toml` `[project.scripts] migrate`, [tests/test_migrate_cli.py](tests/test_migrate_cli.py) |
+| Query-parity cutover gate | [shadow_diff.py](shadow_diff.py), [docs/SHADOW_DIFF.md](docs/SHADOW_DIFF.md), [tests/test_shadow_diff.py](tests/test_shadow_diff.py) |
+| Capture & replay (Path F — sampled cutover validation) | [Proxy/capture.py](Proxy/capture.py), [Proxy/app.py](Proxy/app.py) (capture hook), [replay/replayer.py](replay/replayer.py), [docs/CAPTURE_REPLAY.md](docs/CAPTURE_REPLAY.md), [tests/test_proxy_capture.py](tests/test_proxy_capture.py), [tests/test_replayer.py](tests/test_replayer.py) |
 | Testing & CI | [docs/TESTING.md](docs/TESTING.md), [pytest.ini](pytest.ini), [.github/workflows/ci.yml](.github/workflows/ci.yml), [.github/workflows/ci-security-strict.yml](.github/workflows/ci-security-strict.yml), [tests/](tests/) |
 | Reindex with `script` example | [Remote_Reindex/Elastic_DEVTOOLS_reindex_with_script.json](Remote_Reindex/Elastic_DEVTOOLS_reindex_with_script.json) |
 | Org runbook template | [docs/RUNBOOK_TEMPLATE.md](docs/RUNBOOK_TEMPLATE.md) |
@@ -77,6 +83,18 @@ npm run lint && npm run format:check && npm run typecheck
 
 Smoke and manual procedures: [docs/TESTING.md](docs/TESTING.md).
 Production go/no-go: [docs/PRODUCTION_CHECKLIST.md](docs/PRODUCTION_CHECKLIST.md).
+
+---
+
+## Open items / known gaps
+
+The repository is at parity with [m-adams/opensearch-to-elasticsearch-serverless](https://github.com/m-adams/opensearch-to-elasticsearch-serverless) and broadly with the data-movement scope of upstream [opensearch-project/opensearch-migrations](https://github.com/opensearch-project/opensearch-migrations) for the OpenSearch → Elastic direction. The remaining honest gap is:
+
+| Gap | Why it isn't shipped here | Workaround |
+|-----|---------------------------|-----------|
+| Kafka-backed, zero-loss, Lucene-stream traffic mirroring at petabyte scale (upstream's Java capture/replay pipeline) | Faithfully reproducing it would be 2–4 person-months and require operating Kafka. The in-repo Path F (Python proxy capture + replayer) handles **sampled cutover validation**, which is the typical use case. | Use the in-repo Path F for cutover validation; for high-fidelity production traffic mirroring at scale, run upstream's Java pipeline. |
+
+There are no other known capability gaps relative to upstream / m-adams for the OpenSearch → Elastic direction. Bug fixes and incremental improvements track in the issue tracker.
 
 ---
 

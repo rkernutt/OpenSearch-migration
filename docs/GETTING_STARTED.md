@@ -6,10 +6,20 @@ This guide assumes you are **new to this repository**. You want to move data fro
 
 ## What this project gives you
 
-- **Patterns and scripts**, not a single “Migrate” button: remote **reindex** from Elastic, **Logstash** streaming, optional **Kafka** design notes, a **SigV4 proxy** for private OpenSearch, and **validation** CLI.
+- **Six data paths**, plus cutover gates and metadata sanitization:
+  - **Path A — Remote reindex** from Elastic (Hosted only).
+  - **Path B — Logstash** (streaming; works to Hosted and Serverless).
+  - **Path C — Kafka** (architecture-only design notes).
+  - **Path D — S3 staging** (extract → S3 → bulk load; air-gap-friendly).
+  - **Path E — Reindex-from-Snapshot** (wraps upstream RFS image; Lucene-aware).
+  - **Path F — Capture & replay** (cutover validation, not a primary load path).
+- **Cutover gates:** [`shadow_diff.py`](../shadow_diff.py) (curated query parity) and the replay path (sampled real-traffic parity). Both exit non-zero on drift.
+- **Metadata migration:** [`metadata_migration`](../metadata_migration/) copies templates / component templates / ingest pipelines with optional Serverless settings sanitization and ES 5/6 multi-type mapping flatten.
+- **Validation, preflight, polling, multi-index:** [`validate_migration.py`](../validate_migration.py), [`preflight.py`](../preflight.py), [`poll_reindex_task.py`](../poll_reindex_task.py), [`multi_index_reindex.py`](../multi_index_reindex.py).
+- **Single binary, all paths:** [`migrate.py`](../migrate.py) — `migrate preflight`, `migrate s3-load`, `migrate metadata`, `migrate shadow-diff`, `migrate replay`, etc. Run `migrate --help` to see every subcommand. `pip install -e .` exposes it as the `migrate` console script.
 - **Configuration** is mostly **environment variables** in a repo-root **`.env`** file (never commit it). Example templates live in [examples/env](../examples/env/) and the full reference is [`.env.example`](../.env.example).
 
-For deeper operations (ordering, retries, large indices, semantic fields), use [RUNBOOK.md](../RUNBOOK.md).
+For deeper operations (ordering, retries, large indices, semantic fields), use [RUNBOOK.md](../RUNBOOK.md). For a single-page index of every CLI tool, see [docs/TOOLS.md](TOOLS.md).
 
 ## Prerequisites
 
@@ -66,13 +76,23 @@ Optional: run unit tests with **`make test`** (see [Makefile](../Makefile)) or `
 
 ## Step 4: Choose how you will migrate
 
-Pick **one primary path** (you can use validation after any path):
+Pick **one primary path** (you can use validation and the cutover gates after any path):
 
 | Path | Best when | Where to learn more |
 |------|-----------|---------------------|
 | **A. Remote reindex** | Elastic **Cloud Hosted**, OpenSearch reachable from Elastic; one-off or large batch | [Remote_Reindex/README.md](../Remote_Reindex/README.md), [RUNBOOK.md](../RUNBOOK.md) Option A |
 | **B. Logstash** | Streaming, or Elastic **Serverless** destination, or you prefer a pipeline | [Logstash_input/README.md](../Logstash_input/README.md), [RUNBOOK.md](../RUNBOOK.md) Option B |
 | **C. Kafka** | You need a durable buffer / replay; you operate Kafka | [KAFKA_MIGRATION.md](KAFKA_MIGRATION.md) |
+| **D. S3 staging** | VPC-only source, Serverless destination, or air-gapped operators | [S3_MIGRATION.md](S3_MIGRATION.md), [RUNBOOK.md](../RUNBOOK.md) Option D |
+| **E. RFS (wrapped)** | You already snapshot to S3; multi-TB; Lucene-aware | [RFS.md](RFS.md), [RUNBOOK.md](../RUNBOOK.md) Option E |
+
+Two extra gates that pair with **any** path:
+
+| Gate | Purpose | Docs |
+|------|---------|------|
+| **Metadata first** (run before the data path) | Copy templates / component templates / ingest pipelines with sanitization | [METADATA_MIGRATION.md](METADATA_MIGRATION.md) |
+| **shadow_diff** (run before cutover) | Curated query parity check; non-zero exit on drift | [SHADOW_DIFF.md](SHADOW_DIFF.md) |
+| **Capture & replay** (Path F; run before cutover) | Sampled real-traffic parity; non-zero on drift | [CAPTURE_REPLAY.md](CAPTURE_REPLAY.md) |
 
 Remote reindex is configured in **Kibana Dev Tools** on **Elastic** (JSON bodies under `Remote_Reindex/`). Those requests use credentials you put **inside the Dev Tools JSON** (`source.remote` user/password), not necessarily your `.env`. Use **`.env`** for the **Python validation** step.
 
@@ -132,8 +152,12 @@ Uses **`DEST_ELASTIC_*`** from `.env`.
 
 ## Where to go next
 
-- [RUNBOOK.md](../RUNBOOK.md) — full procedure, versioning, ordering, throughput.
-- [docs/SERVERLESS.md](SERVERLESS.md) — Elastic Serverless and OpenSearch Serverless caveats.
+- [RUNBOOK.md](../RUNBOOK.md) — full procedure for every option (A–F), versioning, ordering, throughput.
+- [docs/TOOLS.md](TOOLS.md) — single-page index of every CLI tool with one-line descriptions.
+- [docs/SERVERLESS.md](SERVERLESS.md) — Elastic Serverless and OpenSearch Serverless caveats; recommended path is metadata + S3/RFS + shadow_diff.
+- [docs/METADATA_MIGRATION.md](METADATA_MIGRATION.md) — templates, pipelines, settings/mapping sanitization.
+- [docs/SHADOW_DIFF.md](SHADOW_DIFF.md) — query-parity cutover gate.
+- [docs/CAPTURE_REPLAY.md](CAPTURE_REPLAY.md) — Path F (proxy-tee + replayer).
 - [docs/SEMANTIC_MIGRATION.md](SEMANTIC_MIGRATION.md) — vector / `semantic_text` follow-ups.
 
 If something fails (401/403, TLS, connectivity), see [docs/TLS_AND_CREDENTIAL_LIFECYCLE.md](TLS_AND_CREDENTIAL_LIFECYCLE.md) and your cloud provider’s networking docs.

@@ -4,7 +4,7 @@
 
 PYTHON ?= python3
 
-.PHONY: help test lint preflight validate poll-task reindex-gen
+.PHONY: help test lint preflight validate poll-task reindex-gen s3-load s3-extract rfs metadata sanitize migrate shadow-diff replay
 
 help:
 	@echo "OpenSearch-migration — make targets for CLI/automation"
@@ -15,6 +15,14 @@ help:
 	@echo "  make validate ARGS=\"...\"   validate_migration.py"
 	@echo "  make poll-task ARGS=\"--task-id ...\"   poll_reindex_task.py"
 	@echo "  make reindex-gen ARGS=\"--indices a,b --large\"   multi_index_reindex.py"
+	@echo "  make s3-extract ARGS=\"--indices a,b --s3-uri s3://bucket/job/\"   s3_migration/s3_extract.py"
+	@echo "  make s3-load ARGS=\"--s3-uri s3://bucket/job/ ...\"   s3_migration/s3_bulk_load.py"
+	@echo "  make rfs ARGS=\"--upstream-image ... --snapshot-name ...\"   s3_migration/rfs_runner.py"
+	@echo "  make metadata ARGS=\"--include templates,index_templates ...\"   metadata_migration/migrator.py"
+	@echo "  make sanitize ARGS=\"--input mapping.json\"   metadata_migration/sanitizer.py"
+	@echo "  make migrate ARGS=\"<subcommand> ...\"        umbrella CLI dispatching to all of the above"
+	@echo "  make shadow-diff ARGS=\"--queries-file ...\"  shadow_diff.py — query-parity cutover gate"
+	@echo "  make replay ARGS=\"--captures ...\"            replay/replayer.py — replay captured proxy traffic"
 	@echo ""
 	@echo "Examples:"
 	@echo "  make preflight ARGS=\"--strict-exit-codes --source-index logs-2024 --dest-index logs-2024\""
@@ -41,3 +49,27 @@ poll-task:
 
 reindex-gen:
 	$(PYTHON) multi_index_reindex.py $(ARGS)
+
+s3-extract:
+	$(PYTHON) -m s3_migration.s3_extract $(ARGS)
+
+s3-load:
+	$(PYTHON) -m s3_migration.s3_bulk_load $(ARGS)
+
+rfs:
+	$(PYTHON) -m s3_migration.rfs_runner $(ARGS)
+
+metadata:
+	$(PYTHON) -m metadata_migration.migrator $(ARGS)
+
+sanitize:
+	$(PYTHON) -m metadata_migration.sanitizer $(ARGS)
+
+migrate:
+	$(PYTHON) migrate.py $(ARGS)
+
+shadow-diff:
+	$(PYTHON) shadow_diff.py $(ARGS)
+
+replay:
+	$(PYTHON) -m replay.replayer $(ARGS)

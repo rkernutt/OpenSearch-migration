@@ -1,0 +1,25 @@
+aws_region = "us-east-1"
+project    = "os-rfs"
+
+vpc_id      = "vpc-0123456789abcdef0"
+subnet_ids  = ["subnet-aaaa", "subnet-bbbb"]
+
+# Pin the image. Get the digest with `docker pull <tag>; docker inspect`.
+# Avoid 'latest' in production.
+rfs_image = "ghcr.io/your-org/opensearch-migrations@sha256:<digest>"
+
+snapshot_bucket = "my-os-snapshots"
+snapshot_prefix = "production/repo/"
+snapshot_name   = "snap-2026-04-29"
+
+source_version = "OpenSearch_2_13"
+target_host    = "https://my-project.es.us-east-1.aws.elastic.cloud"
+target_type    = "ELASTICSEARCH_SERVERLESS"
+
+# Create this with `aws secretsmanager create-secret` ahead of time.
+target_api_key_secret_arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:rfs-target-api-key-AbCdEf"
+
+task_cpu    = "2048"
+task_memory = "8192"
+# 0 = define the task only; trigger runs with `aws ecs run-task ...`.
+task_count  = 0

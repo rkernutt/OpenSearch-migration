@@ -1,0 +1,22 @@
+aws_region = "us-east-1"
+project    = "os-rfs"
+
+# Wire these from the rfs-fargate module:
+#   terraform output -raw cluster_arn
+#   terraform output -raw task_definition_arn
+#   terraform output -raw security_group_id
+cluster_arn         = "arn:aws:ecs:us-east-1:123456789012:cluster/os-rfs-rfs"
+task_definition_arn = "arn:aws:ecs:us-east-1:123456789012:task-definition/os-rfs-rfs:7"
+security_group_id   = "sg-0123456789abcdef0"
+
+# Both roles created by the rfs-fargate module — Step Functions needs to
+# PassRole both of them when calling ecs:RunTask.
+passable_role_arns = [
+  "arn:aws:iam::123456789012:role/os-rfs-rfs-execution",
+  "arn:aws:iam::123456789012:role/os-rfs-rfs-task",
+]
+
+subnet_ids = ["subnet-aaaa", "subnet-bbbb"]
+
+max_concurrency = 4
+max_retries     = 2

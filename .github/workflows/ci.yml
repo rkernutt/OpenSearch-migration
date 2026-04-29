@@ -103,3 +103,15 @@ jobs:
         run: |
           terraform init -backend=false
           terraform validate
+
+      - name: terraform validate (rfs-fargate)
+        working-directory: iac/terraform/rfs-fargate
+        run: |
+          terraform init -backend=false
+          terraform validate
+
+      - name: terraform validate (rfs-orchestration)
+        working-directory: iac/terraform/rfs-orchestration
+        run: |
+          terraform init -backend=false
+          terraform validate

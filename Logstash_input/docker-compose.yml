@@ -34,3 +34,23 @@ services:
     volumes:
       - ./pipeline/logstash_api_key.conf:/usr/share/logstash/pipeline/logstash.conf:ro
     restart: "no"
+
+  # S3 -> Elastic. Pairs with `python -m s3_migration.s3_extract`, or use it
+  # standalone for partner NDJSON drops. See pipeline/logstash_s3.conf.
+  logstash-s3:
+    profiles:
+      - s3
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - ../.env
+    environment:
+      LS_JAVA_OPTS: "-Xmx1g -Xms1g"
+    volumes:
+      - ./pipeline/logstash_s3.conf:/usr/share/logstash/pipeline/logstash.conf:ro
+      - logstash_s3_data:/usr/share/logstash/data
+    restart: "no"
+
+volumes:
+  logstash_s3_data:

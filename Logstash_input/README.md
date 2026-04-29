@@ -35,6 +35,27 @@ Requires in `.env`: `DEST_ELASTIC_HOST`, `DEST_ELASTIC_API_KEY` (same as `valida
 
 **API key format:** use the same Base64 value Elastic shows for an API key (or `id:api_key` if your Logstash version documents that form—see [Elasticsearch output plugin](https://www.elastic.co/guide/en/logstash/current/plugins-outputs-elasticsearch.html)).
 
+### S3 input (read NDJSON from S3 → Elastic)
+
+For partner data drops, archived OpenSearch dumps, or output produced by
+[`s3_migration.s3_extract`](../s3_migration/s3_extract.py):
+
+```bash
+# Use examples/env/logstash-s3.env.example as a template; merge into ../.env.
+docker compose --profile s3 up --build
+```
+
+Requires in `.env`: `S3_BUCKET`, `S3_PREFIX`, `AWS_REGION`, plus the same
+`LOGSTASH_DEST_INDEX` and either `ELASTIC_CLOUD_ID` + `ELASTIC_CLOUD_AUTH` or
+`DEST_ELASTIC_HOST` + `DEST_ELASTIC_API_KEY`. AWS credentials come from the
+container task / instance role unless set explicitly.
+
+**When to prefer the Python loader instead:** if the S3 prefix is bulk-format
+NDJSON (alternating action / source lines, as produced by
+`s3_migration.s3_extract`), use `python -m s3_migration.s3_bulk_load` — it
+preserves `_id` and the action mapping exactly. This Logstash pipeline is best
+for **source-only NDJSON** where you want Logstash's filter ecosystem.
+
 ### Proxy + SigV4 (OpenSearch IAM-only)
 
 Point OpenSearch `hosts` at your HTTP proxy (repo [Proxy](../Proxy/README.md)):

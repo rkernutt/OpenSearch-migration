@@ -12,6 +12,8 @@ This project helps you read indexes from an OpenSearch cluster and migrate or re
 
 **CLI / CI / orchestration:** [Makefile](Makefile) (`make test`, `make lint`, `make preflight`, `make validate`), exit codes in [docs/AUTOMATION.md](docs/AUTOMATION.md), and platform notes (Tines, Step Functions, Jenkins) in [docs/ORCHESTRATION.md](docs/ORCHESTRATION.md). **Tines story blueprint:** [docs/TINES_STORY_TEMPLATE.md](docs/TINES_STORY_TEMPLATE.md). Version expectations: [docs/VERSION_MATRIX.md](docs/VERSION_MATRIX.md).
 
+**One CLI to rule them all:** [`migrate.py`](migrate.py) is an umbrella entry point that dispatches to every script in this repo (`migrate preflight`, `migrate s3-load`, `migrate metadata`, `migrate shadow-diff`, `migrate replay`, …). `pip install -e .` exposes it as the `migrate` console script. See [docs/TOOLS.md](docs/TOOLS.md) for the full CLI index.
+
 **License:** [LICENSE](LICENSE) (Apache-2.0); attributions: [NOTICE](NOTICE). **Changelog:** [CHANGELOG.md](CHANGELOG.md).
 
 ### Documentation map
@@ -25,6 +27,13 @@ This project helps you read indexes from an OpenSearch cluster and migrate or re
 | [docs/ORCHESTRATION.md](docs/ORCHESTRATION.md) | Tines, Step Functions, Jenkins |
 | [docs/TINES_STORY_TEMPLATE.md](docs/TINES_STORY_TEMPLATE.md) | Tines story blueprint |
 | [docs/SERVERLESS.md](docs/SERVERLESS.md) | Elastic / OpenSearch Serverless |
+| [docs/S3_MIGRATION.md](docs/S3_MIGRATION.md) | S3 staging path (extract → S3 → load) |
+| [docs/RFS.md](docs/RFS.md) | Snapshot path via wrapped upstream RFS |
+| [docs/METADATA_MIGRATION.md](docs/METADATA_MIGRATION.md) | Templates / pipelines / sanitizers (Serverless + multi-version) |
+| [docs/SHADOW_DIFF.md](docs/SHADOW_DIFF.md) | Query-parity cutover gate (`shadow_diff.py`) |
+| [docs/CAPTURE_REPLAY.md](docs/CAPTURE_REPLAY.md) | Sampled traffic capture & replay (Path F) |
+| [docs/TOOLS.md](docs/TOOLS.md) | Single index of every CLI script with one-line description and links |
+| [`migrate.py`](migrate.py) | Umbrella `migrate <subcommand>` CLI (one entry point for every script in this repo) |
 | [docs/KAFKA_MIGRATION.md](docs/KAFKA_MIGRATION.md) | Kafka buffer pattern |
 | [docs/SEMANTIC_MIGRATION.md](docs/SEMANTIC_MIGRATION.md) | Vectors / `semantic_text` |
 | [docs/TESTING.md](docs/TESTING.md) | pytest, sampling, integration |
@@ -34,7 +43,9 @@ This project helps you read indexes from an OpenSearch cluster and migrate or re
 
 ### Caveats and scope
 
-- **Three data paths, not interchangeable:** **Remote reindex** needs **Elastic Cloud Hosted** and network access from Elastic to OpenSearch; it does **not** apply to **Elastic Serverless** as a destination ([docs/SERVERLESS.md](docs/SERVERLESS.md)). **Logstash** (or similar) is the usual answer for streaming and Serverless. **Kafka** is documented as an **optional architecture** (buffer/replay)—this repo does **not** ship a full Kafka/Connect stack; you operate brokers and consumers in your environment ([docs/KAFKA_MIGRATION.md](docs/KAFKA_MIGRATION.md)).
+- **Six data paths, not interchangeable:** **Remote reindex** needs **Elastic Cloud Hosted** and network access from Elastic to OpenSearch; it does **not** apply to **Elastic Serverless** as a destination ([docs/SERVERLESS.md](docs/SERVERLESS.md)). **Logstash** (or similar) is the usual answer for streaming and Serverless. **S3 staging** ([docs/S3_MIGRATION.md](docs/S3_MIGRATION.md)) decouples extract and load via gzipped NDJSON in S3 — ideal for VPC-only sources and Serverless destinations. **RFS** ([docs/RFS.md](docs/RFS.md)) wraps the upstream OpenSearch Migrations container to read S3 snapshots Lucene-natively. **Capture & replay** ([docs/CAPTURE_REPLAY.md](docs/CAPTURE_REPLAY.md)) is a *cutover-validation* path, not a primary load path: the SigV4 proxy tees traffic to NDJSON and a replayer reissues a sampled subset against the destination. **Kafka** is documented as an **optional architecture** (buffer/replay)—this repo does **not** ship a full Kafka/Connect stack; you operate brokers and consumers in your environment ([docs/KAFKA_MIGRATION.md](docs/KAFKA_MIGRATION.md)).
+- **Cutover gates, not just data movement:** [`shadow_diff.py`](shadow_diff.py) replays curated queries against source + dest and exits non-zero on drift; the capture/replay path validates sampled real traffic. Both are **gates**, not loaders — pair them with a primary path before flipping production traffic.
+- **Metadata is migrated separately:** Index templates, component templates, and ingest pipelines are migrated by [`metadata_migration`](metadata_migration/) with optional Serverless settings sanitization and ES 5/6 multi-type mapping flatten. Run **before** the data path so destination indices are created with the right settings/mappings.
 - **Orchestration examples, not exclusives:** [docs/ORCHESTRATION.md](docs/ORCHESTRATION.md) discusses **Tines**, **AWS Step Functions**, and **Jenkins** as common ways to wrap the same CLIs and APIs. Other schedulers, runbooks, or no orchestrator at all are fine. **GitHub Actions** in this repository is for **CI on the toolkit** (tests, lint, Terraform validate)—not a required way to run production migrations.
 - **Environmental factors (issues are normal until validated):** Problems often come from outside this repository: **network path** (timeouts if Elastic cannot reach OpenSearch or you rely on a proxy/ALB), **auth** (expired keys, wrong SigV4 region, FGAC too tight), **cluster limits** (threadpool rejections, max scroll/context, ingest pressure), **mapping and runtime field differences**, and **data shape** (oversized documents, nested limits). **Semantic / vector** and neural features add more surface area ([docs/SEMANTIC_MIGRATION.md](docs/SEMANTIC_MIGRATION.md)). Always run **preflight**, a **pilot index**, and **validation** in an environment that matches production; nothing here guarantees a zero-touch run for every customer topology.
 
@@ -42,21 +53,30 @@ This project helps you read indexes from an OpenSearch cluster and migrate or re
 
 Primary ways to move data **from Amazon OpenSearch Service (or any OpenSearch cluster) into Elastic**:
 
-- **Remote reindex** – Run `POST _reindex` from Kibana/Dev Tools on your **Elastic** deployment, with `source.remote` pointing at the OpenSearch domain. See [Remote_Reindex](Remote_Reindex/). (**Elastic Cloud Hosted**; not Serverless—see [docs/SERVERLESS.md](docs/SERVERLESS.md).)
-- **Logstash** – OpenSearch input → Elasticsearch output. See [Logstash_input](Logstash_input/).
-- **Kafka (optional)** – Buffer and replay between extract and load; see [docs/KAFKA_MIGRATION.md](docs/KAFKA_MIGRATION.md).
+- **A. Remote reindex** — Run `POST _reindex` from Kibana/Dev Tools on your **Elastic** deployment, with `source.remote` pointing at the OpenSearch domain. See [Remote_Reindex](Remote_Reindex/). (**Elastic Cloud Hosted**; not Serverless—see [docs/SERVERLESS.md](docs/SERVERLESS.md).)
+- **B. Logstash** — OpenSearch input → Elasticsearch output. See [Logstash_input](Logstash_input/).
+- **C. Kafka (optional)** — Buffer and replay between extract and load; see [docs/KAFKA_MIGRATION.md](docs/KAFKA_MIGRATION.md). Architecture-only; you operate the brokers and consumers.
+- **D. S3 staging** — Extract OpenSearch to gzipped NDJSON in S3, then bulk-load into Elastic (Hosted **or** Serverless). VPC- and air-gap-friendly. See [docs/S3_MIGRATION.md](docs/S3_MIGRATION.md) and [`s3_migration/`](s3_migration/).
+- **E. Reindex-from-Snapshot (wrapped)** — Read existing S3 snapshots via the upstream OpenSearch Migrations RFS image. Best for very large snapshots and Serverless destinations. See [docs/RFS.md](docs/RFS.md), [`iac/terraform/rfs-fargate/`](iac/terraform/rfs-fargate/), and [`iac/terraform/rfs-orchestration/`](iac/terraform/rfs-orchestration/) (parallel fan-out via Step Functions).
+- **F. Capture & replay (cutover validation)** — Tee proxied traffic to NDJSON via [`Proxy/capture.py`](Proxy/capture.py), then sample-replay it against the destination with [`replay/replayer.py`](replay/replayer.py). See [docs/CAPTURE_REPLAY.md](docs/CAPTURE_REPLAY.md). **Not** a primary load path; pair with one of A–E and use the replay output as a cutover gate.
 
-### Choosing a path (remote reindex vs Logstash vs Kafka)
+Two extra kinds of work that pair with any data path:
 
-| Topic | **Remote reindex** | **Logstash** | **Kafka** (optional buffer) |
-|-------|-------------------|--------------|-----------------------------|
-| **Best for** | Large batch moves when Elastic **Hosted** can reach OpenSearch | Streaming, **Serverless** destinations, jump-host–friendly extract, custom filters | Teams already on Kafka; **durable replay**, spike buffering, **multiple consumers** |
-| **Runs where** | On the **Elasticsearch** cluster (Kibana Dev Tools) | Your host / container (pull OpenSearch, push Elastic) | Brokers + **producer** (extract) and **consumer** (load), often with Logstash or custom workers |
-| **Ops footprint** | Low on your side (no pipeline to deploy) | Single service / Compose stack | Higher (cluster, topics, consumer groups, monitoring) |
-| **Replay / backpressure** | Rerun `_reindex` or task-based resume | DLQ, bounded queries, tuning | Topic retention + offsets; **per-key** ordering if you key by `_id` |
-| **Product caveat** | **Not** on Elastic **Serverless** as destination | Works toward Hosted and Serverless | Design-only in this repo; see [docs/KAFKA_MIGRATION.md](docs/KAFKA_MIGRATION.md) |
+- **Metadata migration** — [`metadata_migration/`](metadata_migration/) copies index templates, component templates, and ingest pipelines from source to dest with optional Serverless settings sanitization and ES 5/6 multi-type mapping flatten. Run **before** the data path. See [docs/METADATA_MIGRATION.md](docs/METADATA_MIGRATION.md).
+- **Cutover gates** — [`shadow_diff.py`](shadow_diff.py) (curated query parity) and the replay path (sampled real-traffic parity) both exit non-zero on drift. Run **after** the data path and **before** flipping production traffic. See [docs/SHADOW_DIFF.md](docs/SHADOW_DIFF.md) and [docs/CAPTURE_REPLAY.md](docs/CAPTURE_REPLAY.md).
 
-**Operations guide:** [RUNBOOK.md](RUNBOOK.md) (versioning, ordering, retries, throughput checklist). **Packaging:** [docs/PACKAGING.md](docs/PACKAGING.md). **Semantic / vectors:** [docs/SEMANTIC_MIGRATION.md](docs/SEMANTIC_MIGRATION.md), [examples/semantic_text/](examples/semantic_text/).
+### Choosing a path
+
+| Best when… | Pick | Notes |
+|------------|------|-------|
+| Elastic Hosted can reach OpenSearch directly; one-off batch | **A. Remote reindex** | Lowest ops footprint; not Serverless. |
+| Streaming or Serverless destination; you want a pipeline you can filter | **B. Logstash** | Works to Hosted and Serverless. |
+| You already have S3 snapshots; multi-TB; Lucene-aware | **E. RFS (wrapped)** | Hosted **or** Serverless via `--target-type ELASTICSEARCH_SERVERLESS`. |
+| Multi-hundred-GB to multi-TB *without* a snapshot, Serverless dest, or VPC-only source | **D. S3 staging** | Decouples extract and load; resumable; works through the SigV4 proxy. |
+| You already operate Kafka and want durable replay / multi-consumer | **C. Kafka** | Architecture-only; you write the harvester / consumer. |
+| Validating destination parity before the cutover | **F. Capture & replay** + **shadow_diff** | These are *gates*, not loaders. |
+
+**Operations guide:** [RUNBOOK.md](RUNBOOK.md) (versioning, ordering, retries, throughput checklist, all six options). **Packaging:** [docs/PACKAGING.md](docs/PACKAGING.md). **Semantic / vectors:** [docs/SEMANTIC_MIGRATION.md](docs/SEMANTIC_MIGRATION.md), [examples/semantic_text/](examples/semantic_text/).
 
 ## Remote reindex (to Elastic Cloud)
 
@@ -112,11 +132,18 @@ python validate_migration.py --indices-file my_indices.txt --sample-size 50
 
 ## Quick start
 
-- **Remote reindex:** Configure the allowlist on Elastic Cloud, then run the reindex request from Dev Tools against your Elastic deployment.
-- **Logstash:** Build and run the Docker image (or run Logstash with the sample config), and set the OpenSearch URL, Elastic Cloud `cloud_id`, and credentials via env or config.
+- **Remote reindex (Path A):** Configure the allowlist on Elastic Cloud, then run the reindex request from Dev Tools against your Elastic deployment.
+- **Logstash (Path B):** Build and run the Docker image (or run Logstash with the sample config), and set the OpenSearch URL, Elastic Cloud `cloud_id`, and credentials via env or config.
+- **S3 staging (Path D):** `migrate s3-extract --indices ... --s3-uri s3://...` then `migrate s3-load --s3-uri s3://...`. See [docs/S3_MIGRATION.md](docs/S3_MIGRATION.md).
+- **RFS (Path E):** `migrate rfs --upstream-image ... --snapshot-name ...`. See [docs/RFS.md](docs/RFS.md).
+- **Capture & replay (Path F):** Set `PROXY_CAPTURE_MODE=local` (or `s3`) on the proxy, then `migrate replay --captures ...`. See [docs/CAPTURE_REPLAY.md](docs/CAPTURE_REPLAY.md).
+- **Cutover gates:** `migrate shadow-diff --queries-file ./cutover-queries.json` for curated query parity. See [docs/SHADOW_DIFF.md](docs/SHADOW_DIFF.md).
+- **Metadata first:** `migrate metadata --include templates,index_templates,component_templates,ingest_pipelines` before any data path. See [docs/METADATA_MIGRATION.md](docs/METADATA_MIGRATION.md).
 - **VPC access:** Deploy the [Proxy](Proxy/README.md) if the OpenSearch domain is not reachable from Elastic Cloud or from your Logstash host. A starter **ALB + security group** sketch is in [iac/terraform/proxy-alb](iac/terraform/proxy-alb).
 - **Multiple indices:** Use `multi_index_reindex.py` (`--indices` / `--indices-file`, optional `--large`) and [RUNBOOK.md](RUNBOOK.md). Poll async tasks with `poll_reindex_task.py`.
 
+For a single-page index of every CLI tool in the repo, see [docs/TOOLS.md](docs/TOOLS.md).
+
 ## Further improvements
 
-See [RECOMMENDATIONS.md](RECOMMENDATIONS.md) for remaining optional follow-up ideas.
+See [RECOMMENDATIONS.md](RECOMMENDATIONS.md) for the implementation map and the (small) remaining backlog.

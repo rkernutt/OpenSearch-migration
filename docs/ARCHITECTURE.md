@@ -32,20 +32,51 @@ flowchart TD
         PROD --> BROKER --> CONS
     end
 
-    EC["Elastic Cloud\n(destination)"]
+    subgraph PATH_D["Path D — S3 staging (s3_migration)"]
+        direction LR
+        EXTRACT["s3_extract.py\n(sliced scroll → NDJSON.gz)"]
+        S3["S3 prefix\n_manifest.json + parts"]
+        LOAD["s3_bulk_load.py\n(NDJSON.gz → _bulk)"]
+        EXTRACT --> S3 --> LOAD
+    end
+
+    subgraph PATH_E["Path E — Reindex-from-Snapshot (wraps upstream)"]
+        direction LR
+        SNAP["OpenSearch _snapshot/_create\n(to S3)"]
+        RFS["rfs_runner.py\n(upstream RFS image, Lucene-aware)"]
+        SNAP --> RFS
+    end
+
+    subgraph PATH_F["Path F — Capture & replay (cutover validation)"]
+        direction LR
+        CAP["Proxy/app.py + capture.py\n(records NDJSON to local/S3)"]
+        REP["replay/replayer.py\n(replays against destination)"]
+        CAP --> REP
+    end
+
+    EC["Elastic Cloud\n(destination — Hosted or Serverless)"]
 
     OS -->|"direct / public endpoint"| PATH_A
     OS -->|"VPC-only domain"| ALB
     OS --> PATH_B
     OS --> PROD
+    OS --> EXTRACT
+    OS --> SNAP
+    OS -->|"client traffic"| CAP
 
     ER -->|"bulk write"| EC
     LS -->|"elasticsearch output"| EC
     CONS -->|"bulk write"| EC
+    LOAD -->|"_bulk"| EC
+    RFS -->|"_bulk (Lucene segments → docs)"| EC
+    REP -->|"replayed requests"| EC
 
     style PATH_A fill:#e8f4f8,stroke:#2196f3
     style PATH_B fill:#e8f8e8,stroke:#4caf50
     style PATH_C fill:#fff8e1,stroke:#ff9800
+    style PATH_D fill:#f3e5f5,stroke:#9c27b0
+    style PATH_E fill:#fbe9e7,stroke:#d84315
+    style PATH_F fill:#e0f2f1,stroke:#00796b
 ```
 
 ---
@@ -122,7 +153,50 @@ flowchart LR
 
 ---
 
-## 4. Multi-index batch migration — end-to-end process
+## 4. S3 staging — extract → S3 → load
+
+End-to-end shape of `s3_migration.s3_extract` → S3 manifest + parts → `s3_migration.s3_bulk_load`. Decouples extract and load, supports VPC-only sources, and is replayable without re-reading OpenSearch.
+
+```mermaid
+sequenceDiagram
+    participant Op as Operator / CI
+    participant EX as s3_extract.py
+    participant OS as OpenSearch<br/>(direct, SigV4, or via Proxy)
+    participant S3 as S3 prefix<br/>(_manifest.json + parts)
+    participant LD as s3_bulk_load.py
+    participant ES as Elastic Cloud<br/>(Hosted / Serverless)
+    participant V as validate_migration.py
+
+    Op->>EX: --indices ... --slices N --s3-uri ...
+    EX->>OS: GET _count (per index)
+    par per slice
+        EX->>OS: POST /idx/_search?scroll=10m<br/>slice {id, max}
+        OS-->>EX: hits + scroll_id
+        loop until empty
+            EX->>OS: POST _search/scroll
+            OS-->>EX: more hits
+        end
+        EX->>S3: PUT data/idx/slice-NNN-part-MMMMM.ndjson.gz
+        EX->>S3: PUT _manifest.json (incremental)
+    end
+    EX-->>Op: summary {documents_extracted, parts_total, manifest_uri}
+
+    Op->>LD: --s3-uri (same prefix) --dest-host ... --dest-api-key ...
+    LD->>S3: GET _manifest.json (or list parts)
+    LD->>S3: GET part-MMMMM.ndjson.gz (streamed)
+    LD->>ES: POST _bulk (batched, retried)
+    ES-->>LD: per-doc results (errors → DLQ in S3)
+    LD-->>Op: summary {documents_succeeded, dlq_used, ...}
+
+    Op->>V: --indices ... --check-existence --sample-size N
+    V->>OS: GET _count, POST _search (sample IDs)
+    V->>ES: GET _count, POST _mget
+    V-->>Op: PASS / FAIL (exit 0/1/3)
+```
+
+---
+
+## 5. Multi-index batch migration — end-to-end process
 
 Full lifecycle for migrating multiple indices, from generation through validation.
 
@@ -164,7 +238,7 @@ flowchart TD
 
 ---
 
-## 5. Infrastructure — AWS deployment topology
+## 6. Infrastructure — AWS deployment topology
 
 How the proxy, Logstash, and tooling fit into a typical AWS VPC layout.
 
@@ -212,7 +286,7 @@ flowchart TB
 
 ---
 
-## 6. CI/CD pipeline
+## 7. CI/CD pipeline
 
 How the GitHub Actions workflow validates the toolkit on every push.
 
@@ -241,7 +315,8 @@ flowchart LR
             TF_FMT["terraform fmt -check"]
             TF_ALB["terraform init + validate\niac/terraform/proxy-alb"]
             TF_ECS["terraform init + validate\niac/terraform/proxy-ecs"]
-            TF_FMT --> TF_ALB --> TF_ECS
+            TF_RFS["terraform init + validate\niac/terraform/rfs-fargate"]
+            TF_FMT --> TF_ALB --> TF_ECS --> TF_RFS
         end
     end
 

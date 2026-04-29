@@ -131,9 +131,98 @@ For `knn_vector`, OpenSearch **semantic**, and Elasticsearch **`semantic_text`**
 
 For durable replay and scaled consumers, see [docs/KAFKA_MIGRATION.md](docs/KAFKA_MIGRATION.md). Often combined with Logstash or a custom harvester.
 
+## Option D: S3 staging (`s3_migration` — extract → S3 → load)
+
+Decoupled extract and load via gzipped NDJSON parts in S3. Works to **Elastic Serverless** as well as Hosted, and is friendly to VPC-only sources (run from a host inside the VPC, or point at the in-repo SigV4 reverse proxy).
+
+1. **Extract** to S3:
+   ```bash
+   python -m s3_migration.s3_extract \
+     --source-host "$SOURCE_OPENSEARCH_HOST" \
+     --source-user "$SOURCE_OPENSEARCH_USER" \
+     --source-password "$SOURCE_OPENSEARCH_PASSWORD" \
+     --indices "logs-2024,metrics-2024" \
+     --s3-uri "s3://my-bucket/migration/2026-04-29/" \
+     --slices 4 --strict-exit-codes --log-format json \
+     --checkpoint-file ./.extract.ckpt
+   ```
+   SigV4 mode is the default when basic credentials aren't supplied. Add `--via-proxy` when routing through the in-repo proxy so the manifest tags `auth: proxy`.
+
+2. **Load** the same prefix into Elastic:
+   ```bash
+   python -m s3_migration.s3_bulk_load \
+     --s3-uri "s3://my-bucket/migration/2026-04-29/" \
+     --dest-host "$DEST_ELASTIC_HOST" --dest-api-key "$DEST_ELASTIC_API_KEY" \
+     --strict-exit-codes --log-format json \
+     --checkpoint-file ./.bulk-load.ckpt
+   ```
+   Per-document failures land under `s3://.../dlq/` by default; rerun the loader against the DLQ prefix to retry.
+
+3. **Validate** (same script as Option A/B):
+   ```bash
+   python validate_migration.py \
+     --indices "logs-2024,metrics-2024" \
+     --check-existence --sample-size 50 \
+     --strict-exit-codes --output-format json
+   ```
+
+For full architecture, format spec, tuning checklist, and troubleshooting, see [docs/S3_MIGRATION.md](docs/S3_MIGRATION.md). Logstash variant for source-only NDJSON: [Logstash_input/pipeline/logstash_s3.conf](Logstash_input/pipeline/logstash_s3.conf) (`docker compose --profile s3 up`).
+
+## Option E: Reindex-from-Snapshot (wrapped upstream RFS)
+
+When you already snapshot OpenSearch / Elasticsearch to S3, the upstream OpenSearch Migrations RFS tool reads those snapshots directly (Lucene-aware) and bulk-indexes to Elastic — including **Elastic Serverless** via `--target-type ELASTICSEARCH_SERVERLESS`. This repo's [`s3_migration.rfs_runner`](s3_migration/rfs_runner.py) is a thin Python wrapper around the upstream container; it streams logs and auto-runs `validate_migration.py` afterwards.
+
+```bash
+export RFS_UPSTREAM_IMAGE="ghcr.io/your-org/opensearch-migrations@sha256:<digest>"
+
+python -m s3_migration.rfs_runner \
+  --upstream-image "$RFS_UPSTREAM_IMAGE" \
+  --snapshot-name snap-2026-04-29 \
+  --s3-repo-uri s3://my-os-snapshots/production/repo \
+  --s3-region us-east-1 \
+  --target-host "$DEST_ELASTIC_HOST" \
+  --target-api-key "$DEST_ELASTIC_API_KEY" \
+  --target-type ELASTICSEARCH_SERVERLESS \
+  --source-version OpenSearch_2_13 \
+  --indices-validate "logs-2024,metrics-2024" --validate-sample-size 50 \
+  --strict-exit-codes
+```
+
+For AWS, [`iac/terraform/rfs-fargate/`](iac/terraform/rfs-fargate/) provisions the same image as a Fargate task (S3 read-only on the snapshot bucket, API key from Secrets Manager). For multi-worker fan-out, [`iac/terraform/rfs-orchestration/`](iac/terraform/rfs-orchestration/) wraps it in a Step Functions Map state. Full guide and troubleshooting: [docs/RFS.md](docs/RFS.md).
+
+## Option F: Capture & replay (cutover validation)
+
+Sampled real-traffic validation. Enable capture on the existing SigV4 proxy and replay later against the destination. Lightweight Python equivalent of upstream's Java capture/replay pipeline; suitable for cutover gates, **not** for petabyte-scale traffic mirroring.
+
+```bash
+# 1) Enable capture on the proxy (local file mode shown; s3:// also supported)
+export OPENSEARCH_ENDPOINT="https://vpc-xxx.us-east-1.es.amazonaws.com"
+export PROXY_CAPTURE_MODE=local
+export PROXY_CAPTURE_DIR=/var/log/proxy-capture
+export PROXY_CAPTURE_PATH_INCLUDE='/_search,/_msearch'
+export PROXY_CAPTURE_METHODS='GET,POST'
+python -m Proxy.app
+
+# 2) Run real / synthetic traffic against the proxy as you normally would.
+
+# 3) Replay a sampled subset against the destination
+python -m replay.replayer \
+  --captures /var/log/proxy-capture/ \
+  --dest-host "$DEST_ELASTIC_HOST" \
+  --dest-api-key "$DEST_ELASTIC_API_KEY" \
+  --method GET,POST \
+  --path-include '/_search$' \
+  --max-requests 5000 --rate-limit 50 \
+  --size-tolerance 0.10 \
+  --report ./replay-report.json \
+  --strict-exit-codes --log-format json
+```
+
+Pair with `shadow_diff` (curated query parity) for a complete cutover gate — both must exit 0 before flipping traffic. Full guide: [docs/CAPTURE_REPLAY.md](docs/CAPTURE_REPLAY.md), [docs/SHADOW_DIFF.md](docs/SHADOW_DIFF.md).
+
 ## Serverless
 
-- **Elastic Cloud Serverless** does not support remote reindex to the same degree as Hosted; use **Logstash**, **Kafka + consumer**, or **custom bulk** to push into Serverless. See [docs/SERVERLESS.md](docs/SERVERLESS.md).
+- **Elastic Cloud Serverless** does not support remote reindex to the same degree as Hosted; use **Option D** ([S3 staging](docs/S3_MIGRATION.md)), **Option E** ([wrapped RFS](docs/RFS.md)), **Option F** ([capture & replay](docs/CAPTURE_REPLAY.md)) for cutover validation, **Logstash**, **Kafka + consumer**, or **custom bulk** to push into Serverless. See [docs/SERVERLESS.md](docs/SERVERLESS.md).
 - **Amazon OpenSearch Serverless** as a source often requires Logstash or a custom signing client; see [docs/SERVERLESS.md](docs/SERVERLESS.md).
 
 ## Dual-write and cutover

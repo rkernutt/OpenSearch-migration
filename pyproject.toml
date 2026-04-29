@@ -1,8 +1,27 @@
 [project]
 name = "opensearch-migration"
-version = "1.2.0"
+version = "1.3.0"
 description = "Toolkit for migrating Amazon OpenSearch Service indices to Elastic Cloud"
 requires-python = ">=3.9"
+
+[project.scripts]
+migrate = "migrate:main"
+
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = [
+  "migrate",
+  "bootstrap_env",
+  "validate_migration",
+  "preflight",
+  "poll_reindex_task",
+  "multi_index_reindex",
+  "shadow_diff",
+]
+packages = ["s3_migration", "metadata_migration", "replay"]
 
 [tool.ruff]
 target-version = "py39"
@@ -33,10 +52,16 @@ check_untyped_defs = false
 explicit_package_bases = true
 namespace_packages = true
 files = [
+  "migrate.py",
   "bootstrap_env.py",
   "validate_migration.py",
   "preflight.py",
   "poll_reindex_task.py",
   "multi_index_reindex.py",
+  "shadow_diff.py",
+  "s3_migration",
+  "metadata_migration",
+  "replay",
+  "Proxy/capture.py",
 ]
 
