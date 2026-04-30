@@ -1,7 +1,7 @@
 # Optional: development, CI, and local verification
 -r requirements.txt
-pytest>=7.0.0,<10
-ruff>=0.8.0,<0.16
-mypy>=1.8.0,<2
-types-requests>=2.31.0,<3
+pytest>=8.4.2,<10
+ruff>=0.15.12,<0.16
+mypy>=1.19.1,<2
+types-requests>=2.32.4.20260107,<3
 moto[s3]>=5.0.0,<6
