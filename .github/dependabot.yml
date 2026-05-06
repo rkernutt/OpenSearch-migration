@@ -1,18 +1,64 @@
 version: 2
+
+# Schedule is monthly (security advisories surface immediately regardless of
+# this setting). Groups roll patch + minor bumps into a single PR per ecosystem
+# so the weekly noise from independent libraries goes away. Major bumps stay
+# in their own PRs so they get a deliberate review.
+#
+# Patch-only updates land via .github/workflows/dependabot-auto-merge.yml
+# once CI is green; minor and major updates wait for human review.
 updates:
+  # Application + script dependencies (repo root).
   - package-ecosystem: pip
     directory: /
     schedule:
-      interval: weekly
-    open-pull-requests-limit: 10
+      interval: monthly
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - python
+    groups:
+      pip-minor-and-patch:
+        update-types:
+          - minor
+          - patch
+      pip-major:
+        update-types:
+          - major
 
+  # Proxy container has its own pinned manifest (separate venv at runtime).
   - package-ecosystem: pip
     directory: /Proxy
     schedule:
-      interval: weekly
+      interval: monthly
     open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - python
+      - proxy
+    groups:
+      pip-minor-and-patch:
+        update-types:
+          - minor
+          - patch
+      pip-major:
+        update-types:
+          - major
 
+  # Reusable GitHub Actions used by .github/workflows/.
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - github-actions
+    groups:
+      gha-minor-and-patch:
+        update-types:
+          - minor
+          - patch
+      gha-major:
+        update-types:
+          - major

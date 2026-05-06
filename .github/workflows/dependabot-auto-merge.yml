@@ -1,0 +1,49 @@
+name: Dependabot auto-merge
+
+# Auto-merges Dependabot pull requests once CI is green, but ONLY for
+# version-update:semver-patch updates (or grouped PRs whose largest bump is a
+# patch). Minor and major bumps still require a human review.
+#
+# Security advisories from Dependabot are also routed through this workflow
+# so that low-risk patch-level CVE fixes land automatically.
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  dependabot-auto-merge:
+    if: ${{ github.actor == 'dependabot[bot]' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Inspect Dependabot metadata
+        id: meta
+        uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Auto-approve patch-level updates
+        if: ${{ steps.meta.outputs.update-type == 'version-update:semver-patch' }}
+        run: gh pr review --approve "$PR_URL" --body "Auto-approved by dependabot-auto-merge (patch update)."
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Enable auto-merge for patch-level updates
+        if: ${{ steps.meta.outputs.update-type == 'version-update:semver-patch' }}
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Comment on minor/major updates so they show up in review queue
+        if: ${{ steps.meta.outputs.update-type != 'version-update:semver-patch' }}
+        run: |
+          gh pr comment "$PR_URL" --body "Update type \`${{ steps.meta.outputs.update-type }}\` requires human review. Auto-merge only handles \`version-update:semver-patch\`."
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
