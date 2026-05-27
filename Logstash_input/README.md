@@ -111,6 +111,53 @@ Ensure every `${...}` variable referenced in `pipeline/logstash.conf` is set in 
 
 The older [sample_Dockerfile](sample_Dockerfile) / `sample_logstash.conf` flow still works; **prefer `Dockerfile` + `docker-compose.yml` here** for `.env`-driven runs.
 
+## Hardened transform filter
+
+The three pipeline configs (`logstash.conf`, `logstash_api_key.conf`,
+`logstash_s3.conf`) ship with a **defensive transform layer** that
+addresses the per-document risks specific to OpenSearch → Elasticsearch
+migrations. The block is present in every pipeline so the safe behaviour
+is the default; each step is a no-op when its target field is absent, so
+keeping it adds no overhead on clean OS 2.x → ES 8.x flows.
+
+### What the filter does and why
+
+| Step | Filter | Purpose |
+|------|--------|---------|
+| 1 | `remove_field => [ "@version" ]` | Drops Logstash's pipeline marker (`1`, `2`, …). Unrelated to ES `_version` and to OpenSearch cluster version. Prevents it from leaking into `_source` on the destination. |
+| 2 | Force `[@metadata][_type] = "_doc"` | The OpenSearch input plugin (with `docinfo => true`) promotes the source `_type` to `[@metadata][_type]`. ES 8+ and Elastic Cloud Serverless reject any value other than `_doc`. Removing then re-adding makes this unconditional and safe regardless of source version. |
+| 3 (commented) | Drop OS-specific fields | `knn_vector` (re-embed on destination), `[opensearch]` (OS-only telemetry), `[event][module]` (OS Observability). Uncomment per data shape. |
+
+Two non-obvious **omissions**:
+
+- **`_seq_no` and `_primary_term` are never requested.** The plugin's
+  default `docinfo_fields` is `[_index, _type, _id]`. Adding the
+  cluster-internal checkpoints to that list would be actively harmful —
+  they reference shard identities on the *source* cluster and have no
+  meaning at the destination.
+- **`version` / `version_type` are not set on the output.** The default
+  Elasticsearch output plugin behaviour ignores the source's `_version`,
+  which is what you want for a one-way migration. Setting
+  `version_type => external` would propagate stale source versions and
+  cause `version_conflict_engine_exception` errors on retry.
+
+### What the filter does **not** solve
+
+| Risk | Solved by |
+|------|-----------|
+| Mapping conflicts (e.g. `text` on source, `keyword` on dest) | [`metadata_migration`](../metadata_migration/) — run first, before any data path. |
+| Forbidden settings on Elastic Cloud Serverless | [`metadata_migration` sanitizer](../metadata_migration/sanitizer.py) — `--target-type ELASTICSEARCH_SERVERLESS`. |
+| OpenSearch snapshot / segment version markers | Not relevant — this pipeline reads documents via REST, never via `_snapshot/_restore`. See [`docs/RFS.md`](../docs/RFS.md) for snapshot-aware paths. |
+| k-NN vector format incompatibility | Out of scope. Re-embed on the destination with an inference processor; see [`docs/SEMANTIC_MIGRATION.md`](../docs/SEMANTIC_MIGRATION.md). |
+
+### Disabling or extending it
+
+The filter block is plain Logstash config — edit the file directly to
+add fields to drop, rename, or transform. The Kafka-buffered equivalent
+of the same defensive transforms is documented in
+[`docs/KAFKA_MIGRATION.md`](../docs/KAFKA_MIGRATION.md) under
+"Document-level transform layer".
+
 ## Ordering (FIFO-style per document id)
 
 Elasticsearch does not guarantee global write order across shards. If **updates to the same `_id` must be applied in order**, use:
