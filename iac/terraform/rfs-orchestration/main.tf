@@ -141,7 +141,7 @@ locals {
                       "Name" = "rfs"
                       "Environment" = [
                         {
-                          "Name"  = "RFS_WORKER_ID"
+                          "Name"    = "RFS_WORKER_ID"
                           "Value.$" = "States.Format('{}', $.id)"
                         }
                       ]

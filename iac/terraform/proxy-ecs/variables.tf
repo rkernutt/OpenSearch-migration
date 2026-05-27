@@ -5,12 +5,12 @@ variable "aws_region" {
 }
 
 variable "project" {
-  type        = string
-  default     = "os-proxy"
+  type    = string
+  default = "os-proxy"
 }
 
 variable "vpc_id" {
-  type        = string
+  type = string
 }
 
 variable "private_subnet_ids" {
@@ -64,18 +64,18 @@ variable "opensearch_domain_arns" {
 }
 
 variable "desired_count" {
-  type        = number
-  default     = 2
+  type    = number
+  default = 2
 }
 
 variable "cpu" {
-  type        = number
-  default     = 256
+  type    = number
+  default = 256
 }
 
 variable "memory" {
-  type        = number
-  default     = 512
+  type    = number
+  default = 512
 }
 
 variable "enable_ecs_autoscaling" {

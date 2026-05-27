@@ -72,6 +72,12 @@ jobs:
 
   gitleaks:
     runs-on: ubuntu-latest
+    # Opt into Node.js 24 now so the gitleaks-action (still distributed as a
+    # Node 20 action upstream) doesn't emit the deprecation warning. GitHub
+    # Actions defaults runners to Node 24 in June 2026; this env var is a
+    # no-op once that switch happens.
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
     steps:
       - uses: actions/checkout@v6
         with:
@@ -90,7 +96,9 @@ jobs:
           terraform_version: "latest"
 
       - name: Terraform fmt (check)
-        run: terraform fmt -check -recursive iac/terraform || true
+        # Strict: any drift fails the job. Run `terraform fmt -recursive
+        # iac/terraform` locally before pushing if this step trips.
+        run: terraform fmt -check -recursive iac/terraform
 
       - name: terraform validate (proxy-alb)
         working-directory: iac/terraform/proxy-alb
