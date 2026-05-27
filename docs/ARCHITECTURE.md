@@ -297,7 +297,7 @@ flowchart LR
     subgraph CI["GitHub Actions — CI workflow"]
         direction TB
 
-        subgraph MATRIX["test (Python 3.9 + 3.11)"]
+        subgraph MATRIX["test (Python 3.10 + 3.11 + 3.12)"]
             INSTALL["pip install\nrequirements + requirements-dev"]
             RUFF_CHECK["ruff check ."]
             RUFF_FMT["ruff format --check ."]

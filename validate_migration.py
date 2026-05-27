@@ -257,7 +257,7 @@ def _sample_doc_ids_time_stratified(
     base_seed = random_seed if random_seed is not None else 42
     out: List[str] = []
     empty_buckets = 0
-    for i, (rng, sz) in enumerate(zip(ranges, sizes)):
+    for i, (rng, sz) in enumerate(zip(ranges, sizes, strict=True)):
         if sz <= 0:
             continue
         body = build_time_bucket_search_body(sz, field, rng, base_seed + i)

@@ -19,7 +19,7 @@ def _hits(
     return {
         "hits": {
             "total": {"value": total, "relation": "eq"},
-            "hits": [{"_id": i, "_source": s} for i, s in zip(ids, sources)],
+            "hits": [{"_id": i, "_source": s} for i, s in zip(ids, sources, strict=True)],
         }
     }
 

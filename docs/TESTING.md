@@ -4,7 +4,7 @@ Use these steps to verify connectivity, credentials, and tooling **before** migr
 
 ## Prerequisites
 
-- **Python version:** the tooling targets **3.9 or newer** (see [requirements.txt](../requirements.txt) and [pyproject.toml](../pyproject.toml) `target-version` / `python_version`). It is **not** pinned to a single minor—use any supported CPython from 3.9 up; [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs **3.9** and **3.11** on each push/PR.
+- **Python version:** the tooling targets **3.10 or newer** (see [requirements.txt](../requirements.txt) and [pyproject.toml](../pyproject.toml) `target-version` / `python_version`). It is **not** pinned to a single minor—use any supported CPython from 3.10 up; [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs **3.10, 3.11 and 3.12** on each push/PR. Python 3.9 was dropped in May 2026 because `botocore` + `types-requests` no longer share a compatible `urllib3` on 3.9 (see commit history).
 - From the repo root: `pip install -r requirements.txt`
 - For automated checks in CI: `pip install -r requirements-dev.txt && pytest`
 

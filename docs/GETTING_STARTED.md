@@ -23,7 +23,7 @@ For deeper operations (ordering, retries, large indices, semantic fields), use [
 
 ## Prerequisites
 
-- **Python 3.9+** if you use the validation scripts (`validate_migration.py`, `poll_reindex_task.py`).
+- **Python 3.10+** if you use the validation scripts (`validate_migration.py`, `poll_reindex_task.py`). CI runs 3.10, 3.11 and 3.12.
 - **Network:** your machine or runner can reach **OpenSearch** and **Elastic** (or you will use a **jump host** / **proxy**—see [Proxy/README.md](../Proxy/README.md)).
 - **Credentials:** OpenSearch (IAM/SigV4 from AWS credentials, or master user/password). Elastic (**API key** or user/password). Amazon OpenSearch needs **`AWS_REGION`** when using SigV4.
 - **Docker** (optional) if you use the **Logstash** path in [Logstash_input](../Logstash_input/).

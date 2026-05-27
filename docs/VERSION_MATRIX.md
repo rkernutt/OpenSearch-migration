@@ -53,7 +53,7 @@ Legend: ✅ supported, ⚠️ supported with a transformation step,
 
 | Component | Versions |
 |-----------|----------|
-| Python | Tested in CI on **3.11** ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml)); **3.9+** runs in practice. |
+| Python | Tested in CI on **3.10, 3.11, 3.12** ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml)). Python 3.9 dropped in May 2026 because `botocore` + `types-requests` no longer share a compatible `urllib3` on 3.9. |
 | `boto3` / `botocore` | See [`requirements.txt`](../requirements.txt). |
 | `requests` | See [`requirements.txt`](../requirements.txt). |
 | `requests-aws4auth` | Required for SigV4 source auth. |
