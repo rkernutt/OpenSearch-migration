@@ -162,6 +162,9 @@ Uses **`DEST_ELASTIC_*`** from `.env`.
 
 ## Checklist before production
 
+Use the full list in [docs/PRODUCTION_CHECKLIST.md](PRODUCTION_CHECKLIST.md). The minimum:
+
+- [ ] `migrate compat-check --strict-exit-codes` exits 0 (or the warnings are reviewed) — [docs/COMPAT_CHECK.md](COMPAT_CHECK.md).
 - [ ] `.env` not committed; API keys scoped to least privilege ([SECURITY.md](../SECURITY.md)).
 - [ ] Destination index settings tuned for bulk load if large ([Elastic_destination_index_settings.json](../Remote_Reindex/Elastic_destination_index_settings.json)).
 - [ ] Cutover and rollback understood ([RUNBOOK.md](../RUNBOOK.md)).
@@ -170,10 +173,13 @@ Uses **`DEST_ELASTIC_*`** from `.env`.
 
 - [RUNBOOK.md](../RUNBOOK.md) — full procedure for every option (A–F), versioning, ordering, throughput.
 - [docs/TOOLS.md](TOOLS.md) — single-page index of every CLI tool with one-line descriptions.
+- [docs/NETWORK_TOPOLOGY.md](NETWORK_TOPOLOGY.md) — which path works under public / VPC / PrivateLink / air-gapped layouts.
+- [docs/VERSION_MATRIX.md](VERSION_MATRIX.md) — Lucene window and per-feature path matrix.
+- [docs/PRODUCTION_CHECKLIST.md](PRODUCTION_CHECKLIST.md) — full sign-off list for production cutover.
 - [docs/SERVERLESS.md](SERVERLESS.md) — Elastic Serverless and OpenSearch Serverless caveats; recommended path is metadata + S3/RFS + shadow_diff.
 - [docs/METADATA_MIGRATION.md](METADATA_MIGRATION.md) — templates, pipelines, settings/mapping sanitization.
 - [docs/SHADOW_DIFF.md](SHADOW_DIFF.md) — query-parity cutover gate.
 - [docs/CAPTURE_REPLAY.md](CAPTURE_REPLAY.md) — Path F (proxy-tee + replayer).
 - [docs/SEMANTIC_MIGRATION.md](SEMANTIC_MIGRATION.md) — vector / `semantic_text` follow-ups.
 
-If something fails (401/403, TLS, connectivity), see [docs/TLS_AND_CREDENTIAL_LIFECYCLE.md](TLS_AND_CREDENTIAL_LIFECYCLE.md) and your cloud provider’s networking docs.
+If something fails (401/403, TLS, connectivity, mapping, codec, vector), see [docs/TROUBLESHOOTING.md](TROUBLESHOOTING.md) and [docs/TLS_AND_CREDENTIAL_LIFECYCLE.md](TLS_AND_CREDENTIAL_LIFECYCLE.md).

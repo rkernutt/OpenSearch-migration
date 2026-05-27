@@ -12,6 +12,8 @@ For a **copy-paste org template** (RACI, links, checklists), see [docs/RUNBOOK_T
 
 **CLI / CI / orchestration:** [Makefile](Makefile), [preflight.py](preflight.py), [compat_check.py](compat_check.py) ([docs/COMPAT_CHECK.md](docs/COMPAT_CHECK.md)), [docs/AUTOMATION.md](docs/AUTOMATION.md) (exit codes); [docs/ORCHESTRATION.md](docs/ORCHESTRATION.md) (Tines, AWS Step Functions, Jenkins).
 
+**Network, versions, troubleshooting:** [docs/NETWORK_TOPOLOGY.md](docs/NETWORK_TOPOLOGY.md) (path × topology matrix incl. VPC + PrivateLink), [docs/VERSION_MATRIX.md](docs/VERSION_MATRIX.md) (Lucene window, k-NN/codec), [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) (consolidated FAQ), [docs/PRODUCTION_CHECKLIST.md](docs/PRODUCTION_CHECKLIST.md) (cutover sign-off).
+
 ## Prerequisites
 
 - **Elastic Cloud Hosted** deployment if using **remote reindex** (remote reindex is not supported on Elastic **Serverless**—use Logstash, Kafka-buffered ETL, or custom bulk; see [docs/SERVERLESS.md](docs/SERVERLESS.md)).

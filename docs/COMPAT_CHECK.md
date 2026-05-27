@@ -165,3 +165,9 @@ See [RUNBOOK.md](../RUNBOOK.md) for the end-to-end playbook and
   hard limits.
 - [KAFKA_MIGRATION.md](KAFKA_MIGRATION.md) — document-level transform
   layer for Kafka-bridged migrations.
+- [NETWORK_TOPOLOGY.md](NETWORK_TOPOLOGY.md) — which path is supported
+  under your VPC / PrivateLink layout.
+- [VERSION_MATRIX.md](VERSION_MATRIX.md) — Lucene window, OS/ES
+  versions, and per-feature path matrix.
+- [TROUBLESHOOTING.md](TROUBLESHOOTING.md) — common compat-related
+  errors and their fixes.

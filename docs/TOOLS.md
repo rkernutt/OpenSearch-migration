@@ -98,6 +98,9 @@ Tool-specific variables (capture mode, Logstash, Kafka, etc.) are listed in:
 
 - **First-time setup:** [GETTING_STARTED.md](GETTING_STARTED.md).
 - **Choosing a path:** [../README.md](../README.md) — the path table.
+- **Network topology:** [NETWORK_TOPOLOGY.md](NETWORK_TOPOLOGY.md) — which path works under your VPC / PrivateLink layout.
+- **Versions:** [VERSION_MATRIX.md](VERSION_MATRIX.md) — Lucene window, k-NN, codecs.
 - **Architecture diagrams:** [ARCHITECTURE.md](ARCHITECTURE.md).
 - **Runbooks:** [../RUNBOOK.md](../RUNBOOK.md) — option-by-option procedures.
 - **Production checklist:** [PRODUCTION_CHECKLIST.md](PRODUCTION_CHECKLIST.md).
+- **Troubleshooting:** [TROUBLESHOOTING.md](TROUBLESHOOTING.md) — common errors and fixes.

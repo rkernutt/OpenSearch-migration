@@ -28,6 +28,10 @@ This project helps you read indexes from an OpenSearch cluster and migrate or re
 | [docs/TINES_STORY_TEMPLATE.md](docs/TINES_STORY_TEMPLATE.md) | Tines story blueprint |
 | [docs/SERVERLESS.md](docs/SERVERLESS.md) | Elastic / OpenSearch Serverless |
 | [docs/COMPAT_CHECK.md](docs/COMPAT_CHECK.md) | Pre-flight compatibility scan: Lucene/k-NN/codec/mapping (`migrate compat-check`) |
+| [docs/NETWORK_TOPOLOGY.md](docs/NETWORK_TOPOLOGY.md) | Per-path support under public / VPC / PrivateLink / air-gapped topologies |
+| [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Consolidated FAQ for common errors (auth, mapping, codec, vector, parity) |
+| [docs/VERSION_MATRIX.md](docs/VERSION_MATRIX.md) | Lucene window, OS/ES version compatibility, per-feature path support |
+| [docs/PRODUCTION_CHECKLIST.md](docs/PRODUCTION_CHECKLIST.md) | Sign-off list before / during / after production cutover |
 | [docs/S3_MIGRATION.md](docs/S3_MIGRATION.md) | S3 staging path (extract → S3 → load) |
 | [docs/RFS.md](docs/RFS.md) | Snapshot path via wrapped upstream RFS |
 | [docs/METADATA_MIGRATION.md](docs/METADATA_MIGRATION.md) | Templates / pipelines / sanitizers (Serverless + multi-version) |
