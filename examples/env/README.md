@@ -8,6 +8,7 @@ These files are **templates only**. Copy the one that matches how you work into 
 | [logstash-cloud-id.env.example](logstash-cloud-id.env.example) | You use **Docker Compose** Logstash with **Elastic Cloud ID** + **cloud_auth** (`elastic:password`). |
 | [logstash-api-key.env.example](logstash-api-key.env.example) | You use **`docker compose --profile apikey`** Logstash with **Elasticsearch URL** + **API key**. |
 | [logstash-s3.env.example](logstash-s3.env.example) | You use **`docker compose --profile s3`** Logstash to read NDJSON parts from S3 (e.g. produced by `s3_extract.py`) and write to Elastic Cloud. |
+| [compat-check.env.example](compat-check.env.example) | You run `migrate compat-check` to scan version/Lucene skew, k-NN indices, custom codecs, and ES 5/6 mapping artefacts **before** picking a data path. |
 | [metadata.env.example](metadata.env.example) | You run `migrate metadata` / `migrate sanitize` to copy templates, component templates, and ingest pipelines (with optional Serverless settings sanitization). |
 | [shadow-diff.env.example](shadow-diff.env.example) | You run `migrate shadow-diff` (a.k.a. `shadow_diff.py`) as a query-parity cutover gate before flipping production traffic. |
 | [proxy-capture.env.example](proxy-capture.env.example) | You run the SigV4 proxy with `PROXY_CAPTURE_MODE=local|s3` to tee traffic to NDJSON for later replay. |

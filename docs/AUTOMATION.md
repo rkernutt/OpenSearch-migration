@@ -10,6 +10,7 @@ From the repository root ([Makefile](../Makefile)):
 |--------|--------|-------------|
 | `make test` | `pytest` | PR checks, no cluster |
 | `make preflight ARGS="..."` | [preflight.py](../preflight.py) | Before long reindex/Logstash |
+| `make compat-check ARGS="..."` | [compat_check.py](../compat_check.py) | Pre-flight compatibility / Lucene / k-NN / codec / mapping scan |
 | `make validate ARGS="..."` | [validate_migration.py](../validate_migration.py) | Post-sync verification |
 | `make poll-task ARGS="..."` | [poll_reindex_task.py](../poll_reindex_task.py) | Async `_reindex` task |
 | `make reindex-gen ARGS="..."` | [multi_index_reindex.py](../multi_index_reindex.py) | Emit Dev Tools bodies (passwords from env) |
@@ -77,6 +78,20 @@ Without the flag, network errors exit **1** (same as task failure); timeout stay
 | 3 | HTTP / network error on ping or HEAD |
 
 Without `--strict-exit-codes`, any failure exits **1** (except argparse, exit **2**).
+
+## `compat_check.py` exit codes
+
+**With `--strict-exit-codes`:**
+
+| Code | Meaning |
+|------|---------|
+| 0 | No compatibility issues found — any data path (B / D / E) is safe. |
+| 2 | Misconfiguration (missing host/auth, unreadable filter, etc.) |
+| 3 | Transport / auth / TLS failure on source or destination |
+| 4 | Compatibility issues found (Lucene gap, k-NN, OS-only codec, mapping warning). Document-streaming paths still work; the JSON report names the affected indices. |
+
+Without the flag, exit codes collapse to **0 / 1**. Full guide:
+[COMPAT_CHECK.md](COMPAT_CHECK.md).
 
 ## `s3_migration/s3_extract.py` exit codes
 

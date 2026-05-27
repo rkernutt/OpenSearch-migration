@@ -48,6 +48,12 @@ _COMMANDS: List[Subcommand] = [
         "argv-via-sys",
     ),
     Subcommand(
+        "compat-check",
+        "Cluster + per-index compatibility report; recommends which path is safe.",
+        "compat_check",
+        "argv-aware",
+    ),
+    Subcommand(
         "validate",
         "Post-load count + sample reconciliation (PASS/FAIL exit codes).",
         "validate_migration",

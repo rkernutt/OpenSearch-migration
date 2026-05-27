@@ -96,15 +96,31 @@ Two extra gates that pair with **any** path:
 
 Remote reindex is configured in **Kibana Dev Tools** on **Elastic** (JSON bodies under `Remote_Reindex/`). Those requests use credentials you put **inside the Dev Tools JSON** (`source.remote` user/password), not necessarily your `.env`. Use **`.env`** for the **Python validation** step.
 
-## Step 5: Preflight (optional, recommended)
+## Step 5: Compatibility + connectivity preflight (recommended)
 
-Check connectivity and auth **before** a long reindex or Logstash run:
+Run **two** checks before a long data move. They take seconds and catch
+the most common cross-cluster surprises:
 
-```bash
-python preflight.py --strict-exit-codes --source-index YOUR_OPENSEARCH_INDEX --dest-index YOUR_ELASTIC_INDEX
-```
+1. **Compatibility scan** — Lucene gap, k-NN indices, OS-only codecs,
+   ES 5/6 mapping artefacts, Serverless-forbidden settings:
 
-Add `--check-counts` to require matching `_count`. See [docs/AUTOMATION.md](AUTOMATION.md) and `make preflight ARGS='...'` in the [Makefile](../Makefile).
+   ```bash
+   migrate compat-check --strict-exit-codes
+   ```
+
+   Exit `0` means any path works; exit `4` means open the per-index
+   report and prefer Path D / B over RFS. Full guide:
+   [docs/COMPAT_CHECK.md](COMPAT_CHECK.md).
+
+2. **Connectivity / auth / count parity:**
+
+   ```bash
+   python preflight.py --strict-exit-codes --source-index YOUR_OPENSEARCH_INDEX --dest-index YOUR_ELASTIC_INDEX
+   ```
+
+Add `--check-counts` to `preflight` to require matching `_count`. See
+[docs/AUTOMATION.md](AUTOMATION.md) and `make preflight ARGS='...'`,
+`make compat-check ARGS='...'` in the [Makefile](../Makefile).
 
 ## Step 6: Run the data move (brief pointers)
 

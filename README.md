@@ -27,6 +27,7 @@ This project helps you read indexes from an OpenSearch cluster and migrate or re
 | [docs/ORCHESTRATION.md](docs/ORCHESTRATION.md) | Tines, Step Functions, Jenkins |
 | [docs/TINES_STORY_TEMPLATE.md](docs/TINES_STORY_TEMPLATE.md) | Tines story blueprint |
 | [docs/SERVERLESS.md](docs/SERVERLESS.md) | Elastic / OpenSearch Serverless |
+| [docs/COMPAT_CHECK.md](docs/COMPAT_CHECK.md) | Pre-flight compatibility scan: Lucene/k-NN/codec/mapping (`migrate compat-check`) |
 | [docs/S3_MIGRATION.md](docs/S3_MIGRATION.md) | S3 staging path (extract → S3 → load) |
 | [docs/RFS.md](docs/RFS.md) | Snapshot path via wrapped upstream RFS |
 | [docs/METADATA_MIGRATION.md](docs/METADATA_MIGRATION.md) | Templates / pipelines / sanitizers (Serverless + multi-version) |
@@ -62,6 +63,7 @@ Primary ways to move data **from Amazon OpenSearch Service (or any OpenSearch cl
 
 Two extra kinds of work that pair with any data path:
 
+- **Pre-flight compatibility scan** — [`compat_check.py`](compat_check.py) probes source + destination once and reports the Lucene gap, any k-NN indices, OpenSearch-only codecs and ES 5/6 mapping artefacts, then recommends which path (B / D / E) is safe. Run **before** anything else. See [docs/COMPAT_CHECK.md](docs/COMPAT_CHECK.md).
 - **Metadata migration** — [`metadata_migration/`](metadata_migration/) copies index templates, component templates, and ingest pipelines from source to dest with optional Serverless settings sanitization and ES 5/6 multi-type mapping flatten. Run **before** the data path. See [docs/METADATA_MIGRATION.md](docs/METADATA_MIGRATION.md).
 - **Cutover gates** — [`shadow_diff.py`](shadow_diff.py) (curated query parity) and the replay path (sampled real-traffic parity) both exit non-zero on drift. Run **after** the data path and **before** flipping production traffic. See [docs/SHADOW_DIFF.md](docs/SHADOW_DIFF.md) and [docs/CAPTURE_REPLAY.md](docs/CAPTURE_REPLAY.md).
 

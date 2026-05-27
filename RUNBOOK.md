@@ -10,7 +10,7 @@ Before production cutover, run a **smoke test** and optional **`pytest`** checks
 
 For a **copy-paste org template** (RACI, links, checklists), see [docs/RUNBOOK_TEMPLATE.md](docs/RUNBOOK_TEMPLATE.md).
 
-**CLI / CI / orchestration:** [Makefile](Makefile), [preflight.py](preflight.py), [docs/AUTOMATION.md](docs/AUTOMATION.md) (exit codes); [docs/ORCHESTRATION.md](docs/ORCHESTRATION.md) (Tines, AWS Step Functions, Jenkins).
+**CLI / CI / orchestration:** [Makefile](Makefile), [preflight.py](preflight.py), [compat_check.py](compat_check.py) ([docs/COMPAT_CHECK.md](docs/COMPAT_CHECK.md)), [docs/AUTOMATION.md](docs/AUTOMATION.md) (exit codes); [docs/ORCHESTRATION.md](docs/ORCHESTRATION.md) (Tines, AWS Step Functions, Jenkins).
 
 ## Prerequisites
 
@@ -23,6 +23,13 @@ For a **copy-paste org template** (RACI, links, checklists), see [docs/RUNBOOK_T
   - **Elastic:** API key or username/password for the Elastic deployment.
 
 ## Version and compatibility (before you migrate)
+
+> Run [`migrate compat-check`](docs/COMPAT_CHECK.md) first. It probes the
+> source (and optionally the destination), reports the Lucene gap, flags
+> any k-NN indices, OpenSearch-only codecs and ES 5/6-era mapping
+> artefacts, and tells you which path (B / D / E) is safe. Exit code `4`
+> means "issues found — see the per-index report"; exit `0` means any
+> path will work.
 
 Three different “version” problems are often confused:
 

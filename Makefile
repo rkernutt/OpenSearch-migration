@@ -4,7 +4,7 @@
 
 PYTHON ?= python3
 
-.PHONY: help test lint preflight validate poll-task reindex-gen s3-load s3-extract rfs metadata sanitize migrate shadow-diff replay
+.PHONY: help test lint preflight compat-check validate poll-task reindex-gen s3-load s3-extract rfs metadata sanitize migrate shadow-diff replay
 
 help:
 	@echo "OpenSearch-migration — make targets for CLI/automation"
@@ -12,6 +12,7 @@ help:
 	@echo "  make test              Run pytest (offline-safe; no cluster required)"
 	@echo "  make lint              Ruff check/format check + Mypy (dev deps required)"
 	@echo "  make preflight ARGS=\"--strict-exit-codes ...\"   preflight.py (see --help)"
+	@echo "  make compat-check ARGS=\"--strict-exit-codes ...\"   compat_check.py — version/Lucene/k-NN/codec/mapping report"
 	@echo "  make validate ARGS=\"...\"   validate_migration.py"
 	@echo "  make poll-task ARGS=\"--task-id ...\"   poll_reindex_task.py"
 	@echo "  make reindex-gen ARGS=\"--indices a,b --large\"   multi_index_reindex.py"
@@ -40,6 +41,9 @@ lint:
 
 preflight:
 	$(PYTHON) preflight.py $(ARGS)
+
+compat-check:
+	$(PYTHON) compat_check.py $(ARGS)
 
 validate:
 	$(PYTHON) validate_migration.py $(ARGS)

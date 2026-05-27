@@ -19,6 +19,12 @@ migrate <subcommand> --help         # full flag list for that subcommand
 migrate --version                   # print __version__
 ```
 
+## Planning (run before the data path)
+
+| Subcommand | `make` target | Module | What it does | Docs |
+|-----------|----------------|--------|--------------|------|
+| `migrate compat-check` | `make compat-check` | [`compat_check.py`](../compat_check.py) | Pre-flight compatibility report: source/destination versions, Lucene window, k-NN indices, OpenSearch-only codecs, Serverless-forbidden settings, ES 5/6 mapping artefacts. Recommends which path (B / D / E) is safe. | [COMPAT_CHECK.md](COMPAT_CHECK.md) |
+
 ## Data paths (load data)
 
 | Subcommand | `make` target | Module | What it does | Docs |
@@ -70,7 +76,7 @@ same convention:
 | `0` | Success. |
 | `2` | Configuration error (bad flag, missing host, unreadable file, …). |
 | `3` | Transport / auth / TLS failure on source or destination. |
-| `4` | Domain failure: `validate` and `shadow-diff` use this for parity drift; `s3-load` and `metadata` use it for per-document or per-object failures; `replay` uses it for response drift. |
+| `4` | Domain failure: `validate` and `shadow-diff` use this for parity drift; `s3-load` and `metadata` use it for per-document or per-object failures; `replay` uses it for response drift; `compat-check` uses it for compatibility warnings. |
 | `1` | Generic failure when `--strict-exit-codes` was not requested. |
 
 Full table per script: [AUTOMATION.md](AUTOMATION.md).

@@ -56,6 +56,7 @@ files = [
   "bootstrap_env.py",
   "validate_migration.py",
   "preflight.py",
+  "compat_check.py",
   "poll_reindex_task.py",
   "multi_index_reindex.py",
   "shadow_diff.py",
