@@ -2,6 +2,6 @@
 -r requirements.txt
 pytest>=8.4.2,<10
 ruff>=0.15.12,<0.16
-mypy>=1.19.1,<2
+mypy>=2.1.0,<3
 types-requests>=2.32.4.20260107,<3
 moto[s3]>=5.1.22,<6
